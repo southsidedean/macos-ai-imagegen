@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs before every push, once turned on with: git config core.hooksPath .githooks
+#
+# Runs what CI runs, so a failure shows up here first. A real emergency can skip it with
+# git push --no-verify.
+exec "$(dirname "$0")/../scripts/check.sh"

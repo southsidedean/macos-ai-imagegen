@@ -1,0 +1,79 @@
+"""Shared test setup: a fence that keeps every test off the network.
+
+A Python socket in the test process that tries to connect or send anywhere but this machine
+fails at once with a clear message. Programs the tests run get a proxy that leads nowhere, and
+git limited to local repositories, so most of those that tried would fail too.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import os
+import socket
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+
+_real_connect = socket.socket.connect
+_real_connect_ex = socket.socket.connect_ex
+_real_sendto = socket.socket.sendto
+
+
+def _is_local(address: Any) -> bool:
+    """Whether a socket address points at this machine (or is a Unix socket path)."""
+    if isinstance(address, (str, bytes)):
+        return True  # a Unix socket: a file on this machine
+    host = address[0]
+    if host in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False  # a host name other than localhost would need DNS: off limits
+
+
+def _refuse(address: Any) -> None:
+    if not _is_local(address):
+        raise RuntimeError(f"tests may not reach the network (tried {address!r})")
+
+
+def _fenced_connect(self: socket.socket, address: Any) -> None:
+    _refuse(address)
+    _real_connect(self, address)
+
+
+def _fenced_connect_ex(self: socket.socket, address: Any) -> int:
+    _refuse(address)
+    return _real_connect_ex(self, address)
+
+
+def _fenced_sendto(self: socket.socket, data: Any, *args: Any) -> int:
+    _refuse(args[-1])  # sendto(data, address) or sendto(data, flags, address)
+    return int(_real_sendto(self, data, *args))
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Applied to every test: only connections to this machine are allowed."""
+    monkeypatch.setattr(socket.socket, "connect", _fenced_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", _fenced_connect_ex)
+    monkeypatch.setattr(socket.socket, "sendto", _fenced_sendto)
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.setenv(name, "localhost,127.0.0.1,::1")
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    yield
+
+
+# Set by git for its hooks, so a test run by the pre-push hook would otherwise inherit them, and
+# every git the tests run would act on this repository instead of the test's own.
+_GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_QUARANTINE_PATH")  # fmt: skip
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Before any test or fixture: forget which repository git was called in."""
+    for name in _GIT_LOCATION:
+        os.environ.pop(name, None)
