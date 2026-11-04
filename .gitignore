@@ -1,0 +1,51 @@
+# Claude assets. CLAUDE.md and PLAN.md are the only ones committed.
+.claude/
+.mcp.json
+CLAUDE.local.md
+claude-session.txt
+resume-session.sh
+plans/
+
+# Your own setup. The repository carries a commented example instead (settings.example.toml).
+/settings.toml
+/.env
+/.env.*
+!/.env.example
+/local/
+
+# Keys and certificates.
+*.pem
+*.key
+*.p12
+
+# Models and generated images never belong in the repository.
+*.safetensors
+*.ckpt
+*.gguf
+/models/
+/output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+build/
+dist/
+
+# Backup and temporary files
+*.bak
+*.tmp
+*~
+*.swp
+*.swo
+
+# macOS and editors
+.DS_Store
+.idea/
+.vscode/
