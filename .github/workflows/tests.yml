@@ -1,0 +1,108 @@
+name: tests
+
+# The checks every pull request must pass before it can merge (each job is a required check on
+# main). scripts/check.sh runs the same checks locally. The smoke test through the API and MCP,
+# and the import of the real engine packages on macOS, join this file in the releases that bring
+# what they check (PLAN.md, "Quality and CI"). No job ever runs a real model.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Weekly, so a new release of a tool or of Python that breaks something shows up even in a
+  # quiet week, and so does a newly published vulnerability.
+  schedule:
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request replaces the older run. Each push to main gets a run of
+# its own, so none is skipped when merges come close together.
+concurrency:
+  group: tests-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: lint and security checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache: a cache another run wrote is a way in, and this install takes seconds.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: false
+      - name: uv.lock matches pyproject.toml, and installs as locked
+        run: |
+          uv lock --check
+          uv sync --locked --extra dev
+      - name: ruff (bugs and risky code; settings in pyproject.toml)
+        run: uv run --no-sync ruff check src tests
+      - name: bandit (security problems in the package)
+        run: uv run --no-sync bandit -q -c pyproject.toml -r src
+      - name: mypy (types, strict)
+        run: uv run --no-sync mypy
+      # shellcheck comes with the runner.
+      - name: shellcheck (the scripts and git hooks, as POSIX sh)
+        run: shellcheck -s sh scripts/*.sh .githooks/*
+      - name: zizmor (these workflows' security)
+        run: uv run --no-sync zizmor --offline --min-severity medium .github/workflows
+      # actionlint, pinned to a release and checked against that release's published checksum.
+      - name: actionlint (mistakes in these workflows)
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/actionlint.tgz" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
+      # Node.js comes with the runner. The validator's version is pinned like everything else.
+      - name: Renovate's settings
+        run: npx --yes --package renovate@44.155.1 -- renovate-config-validator --strict
+      - name: pip-audit (known vulnerabilities in what uv.lock pins)
+        run: |
+          uv export --locked --all-extras --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+          uv run --no-sync pip-audit --disable-pip --require-hashes --progress-spinner off -r "$RUNNER_TEMP/requirements.txt"
+
+  pytest:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Python mia supports, and the newest. The engines may narrow this: PLAN.md's
+        # spike finds out which versions they support.
+        python: ["3.12", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: false
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --extra dev
+      - name: pytest, with coverage (lines the tests never run are listed, for reading)
+        run: uv run --no-sync pytest -q --cov=mia --cov-report=term-missing:skip-covered
+
+  # mia runs only on macOS, so the tests run under macOS's own sh and tools on Apple Silicon too.
+  pytest-macos:
+    name: pytest (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync pytest -q

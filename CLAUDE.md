@@ -34,20 +34,22 @@ This is the design from `PLAN.md`; these parts arrive release by release.
 
 ## Commands
 
-None of these exist until the release that brings them; add each here when it does.
-
 ```sh
-uv sync --extra dev                  # set up the environment from the lockfile
-git config core.hooksPath .githooks  # once: the git hooks
-scripts/check.sh                     # everything CI runs, using the fake engine
-uv run pytest -k name                # tests by name
-scripts/real-engine.sh               # real generation; by hand, on Apple Silicon only
-mia doctor                           # is this machine ready?
+brew install uv shellcheck actionlint  # once: the tools the checks use
+uv sync --locked --extra dev           # set up the environment from the lockfile
+git config core.hooksPath .githooks    # once: the git hooks
+scripts/check.sh                       # everything CI runs; the pre-push hook runs it too
+uv run pytest -k name                  # tests by name
 ```
+
+Still to come, with the releases that bring them: `scripts/real-engine.sh` (real generation, by
+hand, on Apple Silicon only) and `mia doctor`.
 
 - Don't run `ruff format`: as in the other repositories, ruff only lints.
 - CI never runs a real model and there's no self-hosted runner. When a change touches an engine, run
   `scripts/real-engine.sh` and say in the pull request whether it passed.
+- Actions are pinned by commit, and `tests/test_repo.py` checks it. A new required check goes in
+  `main`'s branch protection in the same change.
 - When piping test output, use `set -o pipefail`, so a failing test stops the chain.
 - Tests can't reach the network and have 60 seconds each, unless marked otherwise.
 
@@ -99,7 +101,7 @@ committed. Longer working notes go in the ignored `plans/` folder.
 ## Privacy (public repository)
 
 No host names, domains, personal email addresses, home paths, LAN addresses, account names, tokens,
-or real prompts and images in code, docs, screenshots, commit messages, pull request bodies, or
+hardware details of a real machine (chip, memory, free disk), or real prompts and images in code, docs, screenshots, commit messages, pull request bodies, or
 release notes. `CLAUDE.md` and `PLAN.md` are public too. Examples use stand-ins: `192.168.1.20`,
 `192.0.2.x`, and `my-mac.lan`. The user's own names live in `.git/hooks/private-names`, never
 committed. The user's machines belong in Claude's project memory, not this repository.
