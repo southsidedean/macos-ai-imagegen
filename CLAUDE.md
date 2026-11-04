@@ -23,7 +23,10 @@ This is the design from `PLAN.md`; these parts arrive release by release.
 
 - `mia serve` runs the REST API, the MCP server, and the web page. It never imports an ML package.
 - `mia worker` is the only process that loads a model. It runs one job at a time, runs offline
-  (`HF_HUB_OFFLINE=1`), and may crash or be killed without taking the API down.
+  (`HF_HUB_OFFLINE=1`), and may crash or be killed without taking the API down. It keeps the model
+  loaded with MLX's cache capped (`mx.set_cache_limit`): the default cache made jobs slow and uneven.
+- mflux's step callback fires before MLX computes that step, so a callback means a step has started,
+  not finished.
 - They share one SQLite database, with images as files beside it, under `MIA_HOME` (by default
   `~/Library/Application Support/mia/`).
 - Engines sit behind one interface: mflux (MLX) by default, diffusers (MPS) as an optional extra, and

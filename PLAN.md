@@ -46,7 +46,7 @@ direct way to use whichever open model you find on Hugging Face.
 | Language and tools | Python, with `uv` and a committed lockfile with hashes: the ML dependency tree is large, and it has to be repeatable. uv also picks a Python version the ML packages support, whatever the system's newest Python is. |
 | Web framework | FastAPI, so the API's OpenAPI document and its validation come from one set of types. kia and ok3d use only the standard library, but mia can't, since its engines need large dependencies anyway. Direct dependencies stay few, and each needs a reason. |
 | MCP library | The official Python SDK, in the same server process as the API, rather than a handwritten server like kia's. The 2026-07-28 revision changed the protocol's core (it's now stateless), and the SDK should carry that kind of change for us. Version 2 of the SDK, with its `MCPServer` API, is the one to use; it answers both `2026-07-28` clients and older ones. |
-| Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. |
+| Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. The worker keeps a model loaded between jobs, with MLX's cache capped at 2 GB, which was both the fastest and the steadiest way to run. Cancel takes effect at the next step, and a job that won't stop is killed along with the worker, which then restarts. |
 | Queue and history | One SQLite database, with images as PNG files beside it. One job runs at a time, because one model already uses most of the Mac's memory. Queued jobs survive a restart. A job that was running when the worker died is marked failed, with the reason, and isn't retried on its own. |
 | Asynchronous by default | Submitting a request returns a job right away. Generation can take minutes, longer than HTTP and MCP clients usually wait, so a client submits, then polls, streams progress, or asks to wait a limited time. |
 | Reproducible | Each image records its prompt, seed, size, steps, engine version, and model revision. Hugging Face models are pinned to a commit, so "make it again" means the same weights. |
@@ -340,7 +340,32 @@ Measured on 2026-11-04 with mflux 0.18.1.
   This rests on two prompts. Both spelled a short sign correctly. Schnell also invented a second
   sign full of made-up words.
 - Image size and memory: klein 4B's peak footprint fell to about 10.3 GB at 512 by 512, so it follows
-  image size more than download size. A minimum memory figure still needs measuring.
+  image size more than download size. At 1024 by 1024, MLX reports a peak of about 13.7 GB in active
+  use, and by default holds about 20 GB more in a reusable cache. That cache explains most of the
+  footprint in the table above. A minimum memory figure still needs measuring.
+- Keeping a model loaded (question 2): one process ran many jobs, and the pixels matched each other
+  and a separate command-line run. Klein 4B at 1024 by 1024, four jobs in each mode, run twice for
+  the default cache, on a Mac that was also doing other work:
+
+  | How the worker runs | Time per job | Pageouts per job |
+  |---|---|---|
+  | Loaded, cache capped at 2 GB | 32 s, every job | 2 to 140 |
+  | Loaded, no cache | 32 s, every job | 2 to 428 |
+  | Fresh process per job | 39 to 44 s | 48 to 615 |
+  | Loaded, default cache | 35 to 76 s | 228 to 1,259 |
+
+  An earlier run with the default cache also had jobs of 110 and 160 seconds. The cap doesn't change
+  the pixels. So the worker keeps the model loaded and caps the cache at 2 GB, which saves about 8
+  seconds a job over a fresh process and avoids the slow outliers.
+- Progress: mflux calls its step callback before MLX computes that step, because MLX evaluates lazily.
+  The callback means a step has started, not finished, and the longest waits come after the last
+  callback (the final step and the decode), so mia's progress has to allow for that.
+- Cancel: raising an exception from the callback stops the job cleanly, and the next job's pixels were
+  unchanged. It can only stop at a step boundary, and took 29 seconds in the one test, on a job
+  running with the default cache. Killing a fresh process took 0.05 seconds at 20 seconds in, and left
+  no image behind. A kill during the decode wasn't tested, because that job had already finished.
+- Metadata: saving the plain image object writes no metadata, prompt, or home folder, with the same
+  pixels. That's how mia strips it.
 - launchd (question 6, in part): a one-shot user agent in the GUI session ran in macOS's `Aqua`
   session on the GPU, and gave the same pixels as a direct run. A locked screen and a logged-out
   session are still to be tried.
@@ -350,8 +375,8 @@ Measured on 2026-11-04 with mflux 0.18.1.
   421. Open SDK issues cover parts of the new revision, so it's pinned and tried with real clients
   in 0.4. Which clients need an older revision or support Tasks is still unknown.
 
-Still open: a locked screen under launchd, real MCP clients, and FLUX.1 dev. Also keeping a model
-loaded across jobs, with step progress and cancel between steps (question 2).
+Still open: a locked screen under launchd, real MCP clients, FLUX.1 dev, and cancel timing with the
+cache capped.
 
 ## Risks
 
@@ -359,7 +384,7 @@ loaded across jobs, with step progress and cancel between steps (question 2).
 |---|---|
 | A dependency update breaks a fresh install, as Pillow 13 did | Lockfile with hashes, and no unpinned install path in the docs |
 | mflux changes quickly, or stalls | Exact pin and one adapter; diffusers is a working alternative for FLUX |
-| Memory pressure | Quantized defaults, a memory check before loading, worker restarted when the model changes |
+| Memory pressure | Quantized defaults, MLX's cache capped, a memory check before loading, worker restarted when the model changes |
 | Disk fills up | Refused before download, sizes shown first, external models folder |
 | A leaked token | Scopes, per-device revocation, limits; no tool can reach files outside mia's folders |
 | Malicious model files | Safetensors only, no remote code, no code files downloaded, worker offline |
