@@ -40,7 +40,7 @@ direct way to use whichever open model you find on Hugging Face.
 | Name | **mia**, short for macos-ai-imagegen, the way kia is short for kodi-iptv-assistant. It's the name in the docs, on the pages, and on the command. The repository keeps its name. |
 | Where it runs | Natively on one Apple Silicon Mac, as your user. Not in a container: Docker on macOS runs a Linux VM with no Metal access, so a container would run on the CPU. |
 | Default engine | **mflux**, a native MLX implementation. It runs FLUX and takes Hugging Face repositories and LoRAs directly. It's pinned to an exact version and used only behind mia's engine interface, because its flags and classes change between releases. |
-| Second engine | **diffusers** on PyTorch's MPS backend, from 0.6, for open models mflux doesn't implement (Stable Diffusion 1.5 and SDXL families, for example). It's an optional extra, so a FLUX-only install never pulls in PyTorch. |
+| Second engine | **diffusers** on PyTorch's MPS backend, from 0.6, for open models mflux doesn't implement (Stable Diffusion 1.5 and SDXL families, for example). It's an optional extra. mflux itself requires PyTorch today, so the extra adds diffusers, not PyTorch. |
 | ComfyUI and Draw Things | Not engines for 1.0. ComfyUI's graph workflows are far more than this needs, and it runs on MPS rather than MLX. Draw Things has its own server and model library, which would put a second model store beside mia's. Either could become an engine later, if a real need appears. |
 | Default models (decided 2026-11-04) | FLUX first; see [Models](#models). A fresh install offers a choice and downloads nothing until you pick. The default is Apache 2.0 licensed. FLUX.1 dev is in the catalog as an opt-in for personal use, with its non-commercial license shown. |
 | Language and tools | Python, with `uv` and a committed lockfile with hashes: the ML dependency tree is large, and it has to be repeatable. uv also picks a Python version the ML packages support, whatever the system's newest Python is. |
@@ -130,8 +130,9 @@ strength.
 ### Model sizes
 
 mflux's README lists FLUX.1 at about 34 GB unquantized, 18 GB at 8-bit, and 10 GB at 4-bit.
-Quantizing locally would seem to need the full weights first, while ready-quantized repositories
-save that download if they can be trusted. The spike checks this.
+The `mflux-community` organization on Hugging Face publishes ready-quantized copies, ungated and
+safetensors only, so neither a full download nor an account is needed to start. The 4-bit FLUX.1
+schnell copy is 9.6 GB, and the 4-bit FLUX.2 klein 4B copy is 4.6 GB.
 
 ## Interfaces
 
@@ -218,7 +219,8 @@ Generated images and prompts are private, and this service will take requests ov
 - Uploaded images are untrusted. They're checked for type and pixel count before decoding, and
   re-encoded to drop metadata.
 - Prompts stay out of logs by default, and PNG metadata is a setting, so that sharing a picture
-  needn't share its prompt.
+  needn't share its prompt. mflux writes EXIF and XMP data into every image on its own, so mia
+  removes that and writes only what the setting allows.
 
 ## Look and feel
 
@@ -305,10 +307,34 @@ Each answer goes back in this plan, and any that overturns a decision is called 
 7. MCP: does the official SDK support the 2026-07-28 revision, and which clients in use need an
    older one? Do they support Tasks?
 
+### Spike results so far
+
+Measured on 2026-11-04 with mflux 0.18.1.
+
+- Python (question 1): mflux installs on Python 3.12 and 3.13, not 3.14 or 3.15. It requires
+  `mlx<0.32`, and the versions that resolve for 3.14 and 3.15 are newer. mia's `requires-python`
+  and CI's Python jobs narrow to match when the engine arrives in 0.2.
+- mflux (question 2, in part): it's MIT licensed. Its `pillow>=12.1.1` allows Pillow 13.0.0, which
+  fails on import under Python 3.13, so a fresh install crashes. Pillow 12.3.0 works, and mia's
+  lockfile pins it until that's fixed. Keeping a model loaded across jobs is still to be tried.
+- Speed (question 3, in part): FLUX.1 schnell at 4-bit, 1024 by 1024, 4 steps took 95 to 116 seconds
+  on a test Mac, of which 52 to 62 were the denoising steps. Its peak memory footprint was about
+  25.7 GB. That footprint may count memory-mapped weights, so it isn't yet a minimum memory figure.
+- Quantized weights (question 4): `mflux-community` publishes them. See [Model sizes](#model-sizes).
+- Gating (question 5): `black-forest-labs/FLUX.1-schnell` and FLUX.1 dev are gated, while
+  `FLUX.2-klein-4B` and the `mflux-community` copies aren't. No account or token is needed to start.
+- Reproducibility: the same seed, model, and settings gave identical pixels across runs. The files
+  differ because of the metadata mflux adds, so mia compares pixels, not file hashes.
+- Default model: mflux's docs say FLUX.1 gets maintenance fixes only and may be deprecated. FLUX.2
+  klein 4B is the candidate to replace schnell as the default, and a comparison is under way.
+
+Still open: question 6 (MLX under launchd), question 7 (MCP SDK), and the rest of 2 and 3.
+
 ## Risks
 
 | Risk | What we do about it |
 |---|---|
+| A dependency update breaks a fresh install, as Pillow 13 did | Lockfile with hashes, and no unpinned install path in the docs |
 | mflux changes quickly, or stalls | Exact pin and one adapter; diffusers is a working alternative for FLUX |
 | Memory pressure | Quantized defaults, a memory check before loading, worker restarted when the model changes |
 | Disk fills up | Refused before download, sizes shown first, external models folder |
