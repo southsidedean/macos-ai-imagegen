@@ -366,17 +366,17 @@ Measured on 2026-11-04 with mflux 0.18.1.
   no image behind. A kill during the decode wasn't tested, because that job had already finished.
 - Metadata: saving the plain image object writes no metadata, prompt, or home folder, with the same
   pixels. That's how mia strips it.
-- launchd (question 6, in part): a one-shot user agent in the GUI session ran in macOS's `Aqua`
-  session on the GPU, and gave the same pixels as a direct run. A locked screen and a logged-out
-  session are still to be tried.
+- launchd (question 6): a one-shot user agent in the GUI session ran in macOS's `Aqua` session on the
+  GPU, and gave the same pixels as a direct run. It did the same with the screen locked for the whole
+  job, at the same 7.5 seconds a step. A logged-out session wasn't tried: a user agent needs someone
+  logged in, and the docs say so.
 - MCP (question 7, in part): `mcp` 2.3.0 (MIT) has `2026-07-28` as its latest revision. Over its ASGI
   app in stateless JSON mode, a `2026-07-28` tool call returned an image and a resource link, a
   `2025-11-25` client could initialize, and it answered a bad `Origin` with 403 and a bad `Host` with
   421. Open SDK issues cover parts of the new revision, so it's pinned and tried with real clients
   in 0.4. Which clients need an older revision or support Tasks is still unknown.
 
-Still open: a locked screen under launchd, real MCP clients, FLUX.1 dev, and cancel timing with the
-cache capped.
+Still open: real MCP clients, FLUX.1 dev, and cancel timing with the cache capped.
 
 ## Risks
 
