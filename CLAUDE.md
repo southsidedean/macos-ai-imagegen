@@ -9,10 +9,10 @@ repository.
 models, FLUX first, through a web page, a REST API, an MCP server, and a command.
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
-before starting work, and update it in the same pull request when a decision changes. Nothing is
-built yet: the next step is the 0.1 spike in `PLAN.md`, and its answers go back into that file. From
-0.1, `docs/roadmap.md` is the status page, and every pull request that starts, finishes, or changes a
-roadmap item updates it.
+before starting work, and update it in the same pull request when a decision changes. mia can't
+generate images yet: only `mia doctor` exists, and 0.2 brings the engine. `docs/roadmap.md` is the
+status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
+test checks that it names the version the code is at).
 
 DiffusionBee is only an example of how mia should feel. Never read its folders, use its model
 formats, or depend on it.
@@ -43,10 +43,11 @@ uv sync --locked --extra dev           # set up the environment from the lockfil
 git config core.hooksPath .githooks    # once: the git hooks
 scripts/check.sh                       # everything CI runs; the pre-push hook runs it too
 uv run pytest -k name                  # tests by name
+uv run mia doctor                      # is this machine ready? changes nothing
 ```
 
-Still to come, with the releases that bring them: `scripts/real-engine.sh` (real generation, by
-hand, on Apple Silicon only) and `mia doctor`.
+Still to come, with the release that brings it: `scripts/real-engine.sh` (real generation, by hand,
+on Apple Silicon only).
 
 - Don't run `ruff format`: as in the other repositories, ruff only lints.
 - CI never runs a real model and there's no self-hosted runner. When a change touches an engine, run

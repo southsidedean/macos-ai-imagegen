@@ -1,8 +1,9 @@
 # Plan: mia, an AI image generation stack for macOS
 
-Status: draft, written on 2026-11-04, before anything was built. Facts about outside projects
-were checked on that date and are listed under [Sources](#sources). Anything still unproven is
-marked as a question for the 0.1 spike.
+Status: written on 2026-11-04. 0.1 is done, without a release of its own (decided 2026-11-04), so
+0.2 is the first release; `docs/roadmap.md` has where each release stands. Facts about outside projects were checked on that date and are listed under
+[Sources](#sources). [The spike results](#spike-results-so-far) say what's been tested on a real Mac,
+and what hasn't.
 
 ## Goal
 
@@ -229,8 +230,9 @@ Generated images and prompts are private, and this service will take requests ov
 The same family as kia, ok3d, and avs:
 
 - `images/mia-logo.svg` and `images/mia-logo-dark.svg`: the 64-unit grid, with the rounded screen
-  and stand, navy `#1f2b4d` (`#2b3a66` for dark mode), and pale `#cfd8f0`. On the screen, a landscape
-  picture with an amber `#e5a52e` sparkle.
+  and stand, navy `#1f2b4d` (`#2b3a66` for dark mode), and pale `#cfd8f0`. On the screen, a
+  row of tiles at uneven brightness, leaving room for a large amber `#e5a52e` sparkle: noise settling
+  into an image (chosen 2026-11-04).
 - `images/social-preview.html` and its rendered `social-preview.png`: 1280 by 640, on the navy
   radial background, in the same layout, with "mi" white and "a" amber, then a tagline and a line of
   explanation. It's uploaded in GitHub's settings by hand.

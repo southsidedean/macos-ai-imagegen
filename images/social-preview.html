@@ -1,0 +1,52 @@
+<!doctype html>
+<!--
+The source of images/social-preview.png, the picture GitHub shows when a link to the repository
+is shared (Settings, General, Social preview). It's 1280 by 640, GitHub's size. To make it again
+after a change, render it on a Mac with Chrome (the text is laid out for the Mac's system font;
+another font is wider and may not fit), from the checkout, then upload it on GitHub again:
+
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+    --force-device-scale-factor=1 --window-size=1280,640 \
+    --screenshot="$PWD/images/social-preview.png" "file://$PWD/images/social-preview.html"
+
+The logo is images/mia-logo-dark.svg's. tests/test_repo.py checks the picture's size, and that it
+holds no metadata.
+-->
+<html><head><meta charset="utf-8"><style>
+  html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: radial-gradient(circle at 18% 40%, #26345c 0%, #161f3a 55%, #10172c 100%);
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #eef2fb; position: relative;
+  }
+  .settle { position: absolute; left: 0; top: 538px; width: 1280px; height: 60px; opacity: 0.2; }
+  .wrap { position: absolute; left: 96px; top: 0; bottom: 70px; display: flex; align-items: center; gap: 64px; }
+  .logo { width: 300px; height: 300px; flex: none; filter: drop-shadow(0 18px 40px rgba(0,0,0,0.45)); }
+  h1 { margin: 0; font-size: 156px; font-weight: 800; letter-spacing: -5px; line-height: 1; }
+  h1 span { color: #e5a52e; }
+  .tag { margin: 22px 0 0; font-size: 37px; font-weight: 600; color: #cfd8f0; line-height: 1.2; }
+  .sub { margin: 18px 0 0; font-size: 27px; color: #9aa8cc; line-height: 1.4; max-width: 740px; }
+</style></head><body>
+  <svg class="settle" viewBox="0 0 1280 60">
+    <g fill="#cfd8f0">
+      <rect x="0" y="22" width="40" height="16" rx="5" opacity="0.3"/><rect x="60" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+      <rect x="120" y="22" width="40" height="16" rx="5" opacity="0.5"/><rect x="180" y="22" width="40" height="16" rx="5" opacity="0.3"/>
+      <rect x="240" y="22" width="40" height="16" rx="5" opacity="0.9"/><rect x="300" y="22" width="40" height="16" rx="5" opacity="0.5"/>
+      <rect x="360" y="22" width="40" height="16" rx="5" opacity="0.3"/><rect x="420" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+      <rect x="480" y="22" width="40" height="16" rx="5" opacity="0.5"/><rect x="540" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+      <rect x="600" y="22" width="40" height="16" rx="5" opacity="0.3"/><rect x="660" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+      <rect x="720" y="22" width="40" height="16" rx="5" opacity="0.5"/><rect x="780" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+      <rect x="840" y="22" width="40" height="16" rx="5" opacity="0.9"/><rect x="900" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+      <rect x="960" y="22" width="40" height="16" rx="5" opacity="0.9"/>
+    </g>
+    <path d="M1060 2 Q1060 30 1088 30 Q1060 30 1060 58 Q1060 30 1032 30 Q1060 30 1060 2Z" fill="#e5a52e"/>
+  </svg>
+  <div class="wrap">
+    <svg class="logo" viewBox="0 0 64 64"><rect x="4" y="8" width="56" height="42" rx="9" fill="#2b3a66"/><rect x="11" y="15" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.25"/><rect x="22" y="15" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.55"/><rect x="11" y="25" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.55"/><rect x="22" y="25" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.9"/><rect x="11" y="35" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.9"/><rect x="22" y="35" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.25"/><rect x="33" y="35" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.9"/><rect x="44" y="35" width="9" height="8" rx="2.5" fill="#cfd8f0" opacity="0.55"/><path d="M44 14.5 Q44 24 53.5 24 Q44 24 44 33.5 Q44 24 34.5 24 Q44 24 44 14.5Z" fill="#e5a52e"/><rect x="24" y="53" width="16" height="4" rx="2" fill="#2b3a66"/></svg>
+    <div>
+      <h1>mi<span>a</span></h1>
+      <p class="tag">AI images on your own Mac</p>
+      <p class="sub">FLUX and other open models, through a web page, an API, an MCP server, or the command line.</p>
+    </div>
+  </div>
+</body></html>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import struct
 import subprocess
 from pathlib import Path
 
@@ -62,6 +63,42 @@ def test_every_action_is_pinned_to_a_commit() -> None:
             if re.match(r"^\s*(?:-\s+)?uses:", line) and not PINNED.match(line):
                 loose.append(f"{workflow.name}:{number}")
     assert not loose, f"pin these to a full commit with the version in a comment: {loose}"
+
+
+def test_the_social_preview_is_githubs_size_with_no_metadata() -> None:
+    data = (ROOT / "images" / "social-preview.png").read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = struct.unpack(">II", data[16:24])
+    assert (width, height) == (1280, 640)
+    chunks, position = set(), 8
+    while position < len(data):
+        length = int.from_bytes(data[position : position + 4])
+        chunks.add(data[position + 4 : position + 8].decode("latin1"))
+        position += 12 + length
+    assert not chunks & {"tEXt", "zTXt", "iTXt", "eXIf", "tIME"}, f"strip these: {sorted(chunks)}"
+
+
+@pytest.mark.parametrize("name", ["mia-logo.svg", "mia-logo-dark.svg"])
+def test_the_logos_are_labelled_and_self_contained(name: str) -> None:
+    logo = (ROOT / "images" / name).read_text(encoding="utf-8")
+    assert 'aria-label="mia logo' in logo
+    assert "<script" not in logo
+    assert "href" not in logo
+
+
+@pytest.mark.parametrize("name", ["README.md", "CHANGELOG.md", "SECURITY.md", "PLAN.md", "docs/roadmap.md"])
+def test_links_between_our_own_files_work(name: str) -> None:
+    source = ROOT / name
+    for target in re.findall(r"\]\(([^)#\s]+)(?:#[^)\s]*)?\)|srcset=\"([^\"]+)\"|src=\"([^\"]+)\"", source.read_text(encoding="utf-8")):
+        link = next(part for part in target if part)
+        if not re.match(r"[a-z]+:", link):
+            assert (source.parent / link).exists(), f"{name} links to {link}, which isn't there"
+
+
+def test_the_roadmap_and_changelog_name_this_version() -> None:
+    version = mia.__version__.removesuffix(".dev0")
+    assert version in (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
+    assert version in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_the_package_has_a_version() -> None:
