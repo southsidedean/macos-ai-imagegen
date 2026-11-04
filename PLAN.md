@@ -42,10 +42,10 @@ direct way to use whichever open model you find on Hugging Face.
 | Default engine | **mflux**, a native MLX implementation. It runs FLUX and takes Hugging Face repositories and LoRAs directly. It's pinned to an exact version and used only behind mia's engine interface, because its flags and classes change between releases. |
 | Second engine | **diffusers** on PyTorch's MPS backend, from 0.6, for open models mflux doesn't implement (Stable Diffusion 1.5 and SDXL families, for example). It's an optional extra. mflux itself requires PyTorch today, so the extra adds diffusers, not PyTorch. |
 | ComfyUI and Draw Things | Not engines for 1.0. ComfyUI's graph workflows are far more than this needs, and it runs on MPS rather than MLX. Draw Things has its own server and model library, which would put a second model store beside mia's. Either could become an engine later, if a real need appears. |
-| Default models (decided 2026-11-04) | FLUX first; see [Models](#models). A fresh install offers a choice and downloads nothing until you pick. The default is Apache 2.0 licensed. FLUX.1 dev is in the catalog as an opt-in for personal use, with its non-commercial license shown. |
+| Default models (decided 2026-11-04) | FLUX first; see [Models](#models). A fresh install offers a choice and downloads nothing until you pick. The default is FLUX.2 klein 4B, Apache 2.0 licensed. FLUX.1 schnell stays in the catalog, and FLUX.1 dev is in the catalog as an opt-in for personal use, with its non-commercial license shown. |
 | Language and tools | Python, with `uv` and a committed lockfile with hashes: the ML dependency tree is large, and it has to be repeatable. uv also picks a Python version the ML packages support, whatever the system's newest Python is. |
 | Web framework | FastAPI, so the API's OpenAPI document and its validation come from one set of types. kia and ok3d use only the standard library, but mia can't, since its engines need large dependencies anyway. Direct dependencies stay few, and each needs a reason. |
-| MCP library | The official Python SDK, in the same server process as the API, rather than a handwritten server like kia's. The 2026-07-28 revision changed the protocol's core (it's now stateless), and the SDK should carry that kind of change for us. |
+| MCP library | The official Python SDK, in the same server process as the API, rather than a handwritten server like kia's. The 2026-07-28 revision changed the protocol's core (it's now stateless), and the SDK should carry that kind of change for us. Version 2 of the SDK, with its `MCPServer` API, is the one to use; it answers both `2026-07-28` clients and older ones. |
 | Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. |
 | Queue and history | One SQLite database, with images as PNG files beside it. One job runs at a time, because one model already uses most of the Mac's memory. Queued jobs survive a restart. A job that was running when the worker died is marked failed, with the reason, and isn't retried on its own. |
 | Asynchronous by default | Submitting a request returns a job right away. Generation can take minutes, longer than HTTP and MCP clients usually wait, so a client submits, then polls, streams progress, or asks to wait a limited time. |
@@ -88,8 +88,8 @@ repository and commit, engine, license class, sizes, and suggested steps.
 
 | Model | License | Role |
 |---|---|---|
-| FLUX.1 schnell | Apache 2.0 | Fast default, and the first model the tests and docs use |
-| FLUX.2 klein 4B | Apache 2.0 | Newer candidate; the 0.1 spike decides whether it's the default |
+| FLUX.2 klein 4B | Apache 2.0 | The default, and the first model the tests and docs use |
+| FLUX.1 schnell | Apache 2.0 | A different look, and slower. mflux says FLUX.1 may be deprecated |
 | FLUX.1 dev | FLUX non-commercial license | Quality option at more steps. Personal use only; never downloaded without being chosen |
 | FLUX.2 klein 9B | FLUX non-commercial license | Later option, same terms as dev |
 | Z-Image Turbo | Apache 2.0, per secondary sources; confirm on the model card | Non-FLUX alternative already supported by mflux |
@@ -104,8 +104,9 @@ repository and commit, engine, license class, sizes, and suggested steps.
    that can run it. If mia can't tell, it stops and says why.
 3. Show what would happen: the license class, the download size, the free disk space, and
    whether it should fit in memory.
-4. Download on confirmation, only weights and config files, at the pinned commit, resumable,
-   with its progress shown like a job's.
+4. Download on confirmation, only weights and config files (tokenizer and chat templates included),
+   at the pinned commit, resumable, with its progress shown like a job's. Every file left out is
+   listed, because a skipped file otherwise shows up later as a confusing load error.
 5. Try it with a small test image, then list it as ready. A model that fails stays listed, with
    the failure.
 
@@ -182,8 +183,8 @@ Choices worth recording:
 
 - Base64 images use up an assistant's context, so tools return a small JPEG inline and a
   `resource_link` to the full PNG.
-- Submit and poll comes first, because it works in every client. MCP's newer Tasks support is
-  adopted if the spike finds that clients in use support it, without removing the plain tools.
+- Submit and poll comes first, because it works in every client. The SDK has types for MCP's newer
+  Tasks, which are adopted once clients in use support them, without removing the plain tools.
 - Adding a model isn't a tool yet. An assistant can inspect a repository and tell you the
   command. A web page could suggest a download to an assistant, and a download can be many gigabytes,
   so a person makes that choice.
@@ -218,9 +219,10 @@ Generated images and prompts are private, and this service will take requests ov
   length, and uploads.
 - Uploaded images are untrusted. They're checked for type and pixel count before decoding, and
   re-encoded to drop metadata.
-- Prompts stay out of logs by default, and PNG metadata is a setting, so that sharing a picture
-  needn't share its prompt. mflux writes EXIF and XMP data into every image on its own, so mia
-  removes that and writes only what the setting allows.
+- Prompts stay out of logs by default. mflux writes the prompt, the model's path, and the home folder
+  into every image's EXIF and XMP data, so mia strips all of it by default (decided 2026-11-04),
+  and a test proves it. Prompts and settings stay in mia's database, so any image can still be made
+  again. A setting can write a small record with no paths into the PNG.
 
 ## Look and feel
 
@@ -325,10 +327,31 @@ Measured on 2026-11-04 with mflux 0.18.1.
   `FLUX.2-klein-4B` and the `mflux-community` copies aren't. No account or token is needed to start.
 - Reproducibility: the same seed, model, and settings gave identical pixels across runs. The files
   differ because of the metadata mflux adds, so mia compares pixels, not file hashes.
-- Default model: mflux's docs say FLUX.1 gets maintenance fixes only and may be deprecated. FLUX.2
-  klein 4B is the candidate to replace schnell as the default, and a comparison is under way.
+- Default model (decided 2026-11-04): FLUX.2 klein 4B. mflux's docs say FLUX.1 gets maintenance fixes
+  only and may be deprecated. With warm caches, both at 4-bit, 1024 by 1024, 4 steps:
 
-Still open: question 6 (MLX under launchd), question 7 (MCP SDK), and the rest of 2 and 3.
+  | | FLUX.2 klein 4B | FLUX.1 schnell |
+  |---|---|---|
+  | Total time | 42 to 52 s | 65 to 66 s |
+  | Time per step | about 7.6 s | about 11.8 s |
+  | Download | 4.6 GB | 9.6 GB |
+  | Peak footprint | 24.1 GB | 25.6 GB |
+
+  This rests on two prompts. Both spelled a short sign correctly. Schnell also invented a second
+  sign full of made-up words.
+- Image size and memory: klein 4B's peak footprint fell to about 10.3 GB at 512 by 512, so it follows
+  image size more than download size. A minimum memory figure still needs measuring.
+- launchd (question 6, in part): a one-shot user agent in the GUI session ran in macOS's `Aqua`
+  session on the GPU, and gave the same pixels as a direct run. A locked screen and a logged-out
+  session are still to be tried.
+- MCP (question 7, in part): `mcp` 2.3.0 (MIT) has `2026-07-28` as its latest revision. Over its ASGI
+  app in stateless JSON mode, a `2026-07-28` tool call returned an image and a resource link, a
+  `2025-11-25` client could initialize, and it answered a bad `Origin` with 403 and a bad `Host` with
+  421. Open SDK issues cover parts of the new revision, so it's pinned and tried with real clients
+  in 0.4. Which clients need an older revision or support Tasks is still unknown.
+
+Still open: a locked screen under launchd, real MCP clients, and FLUX.1 dev. Also keeping a model
+loaded across jobs, with step progress and cancel between steps (question 2).
 
 ## Risks
 
