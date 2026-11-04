@@ -12,6 +12,9 @@ description = "A macOS stack for generating AI images with open models, through 
 license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 
+[project.scripts]
+mia = "mia.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
