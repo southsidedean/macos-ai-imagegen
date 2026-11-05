@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import socket
 import sys
 import time
 from collections.abc import Sequence
@@ -147,14 +148,53 @@ def _service(args: argparse.Namespace) -> int:
     return 0
 
 
-def _mcp(url: str) -> int:
+def _remote(args: argparse.Namespace) -> int:
+    from mia import remote
+
+    if args.action == "on":
+        names = args.name or ([] if args.address else remote.suggested_names())
+        addresses = args.address or ([] if args.name else remote.suggested_addresses())
+        settings = remote.turn_on(names, addresses, args.port, args.new_authority)
+        print("Remote access is on, for your own network, at:")
+        for url in settings.urls:
+            print(f"  {url}")
+        print("It starts with mia serve: mia service restart does that, and fails any job that's running.")
+        print(f"Each device has to trust mia's certificate authority, from mia remote authority. Its fingerprint:\n  {remote.fingerprint()}")
+    elif args.action == "off":
+        off = remote.turn_off()
+        print("Remote access is off from the next time mia serve starts: mia service restart does that." if off else "Remote access was already off.")
+    elif args.action == "authority":
+        if not remote.authority_file().exists():
+            raise MiaError("there's no certificate authority yet: mia remote on makes one")
+        print(remote.authority_file().read_text(), end="")
+    else:
+        found = remote.state()
+        if found is None:
+            print("off: mia remote on turns it on")
+            return 0
+        print("on, at " + ", ".join(found.settings.urls))
+        print("listening now" if _listening(found.settings.port) else "not listening: it starts with mia serve, and mia service restart does that")
+        print(f"certificate until {found.certificate_ends:%Y-%m-%d}, renewed by itself" if found.certificate_ends else "no certificate: run mia remote on again")
+        print(f"authority's fingerprint: {remote.fingerprint()}")
+    return 0
+
+
+def _listening(port: int) -> bool:
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    except OSError:
+        return False
+    return True
+
+
+def _mcp(url: str, authority: str | None) -> int:
     """The token comes only from the environment: a command's arguments can be seen by other users of the Mac."""
     token = os.environ.get("MIA_TOKEN")
     if not token:
         raise MiaError("MIA_TOKEN has to hold a token: make one on the Mac running mia serve, with mia token create")
     from mia.mcp_server import bridge
 
-    bridge(url, token).run("stdio")
+    bridge(url, token, authority).run("stdio")
     return 0
 
 
@@ -178,7 +218,7 @@ def _parser() -> argparse.ArgumentParser:
     pull.add_argument("model", nargs="?", default=catalog.DEFAULT.id, help="default: %(default)s")
     pull.add_argument("--yes", action="store_true", help="don't ask first")
     commands.add_parser("history", help="recent images, with their prompts")
-    serve = commands.add_parser("serve", help="run the REST API and a worker, on this Mac only")
+    serve = commands.add_parser("serve", help="run the REST API and a worker")
     serve.add_argument("--port", type=int, default=8765, help="default: %(default)s")
     keeper = commands.add_parser("service", help="keep mia serve running, starting at login")
     steps = keeper.add_subparsers(dest="action")
@@ -189,8 +229,19 @@ def _parser() -> argparse.ArgumentParser:
     steps.add_parser("restart", help="run the mia that's installed now, as after upgrading")
     steps.add_parser("uninstall", help="stop it and remove it, keeping your images and tokens")
     steps.add_parser("status", help="whether it's running; the same as no action")
+    reach = commands.add_parser("remote", help="let your other devices reach mia, over HTTPS on your own network")
+    switches = reach.add_subparsers(dest="action")
+    turn_on = switches.add_parser("on", help="turn it on, or change its names; mia serve has to start again to see it")
+    turn_on.add_argument("--name", action="append", metavar="NAME", help="a name devices use for this Mac, such as my-mac.local; repeatable; default: its Bonjour name")
+    turn_on.add_argument("--address", action="append", metavar="ADDRESS", help="an address devices use for this Mac; repeatable; default: its current one")
+    turn_on.add_argument("--port", type=int, default=8766, help="default: %(default)s")
+    turn_on.add_argument("--new-authority", action="store_true", help="replace the certificate authority: every device has to trust the new one")
+    switches.add_parser("off", help="turn it off, keeping the certificate authority; mia serve has to start again to see it")
+    switches.add_parser("authority", help="print the certificate authority, for your other devices to trust; it holds no secret")
+    switches.add_parser("status", help="whether it's on; the same as no action")
     assistant = commands.add_parser("mcp", help="connect an AI assistant to mia serve, over stdin and stdout")
     assistant.add_argument("--url", default=os.environ.get("MIA_URL", "http://127.0.0.1:8765"), help="where mia serve is; default: %(default)s")
+    assistant.add_argument("--ca", default=os.environ.get("MIA_CA"), metavar="FILE", help="the certificate authority to trust, from mia remote authority")
     worker = commands.add_parser("worker", help="run jobs from the queue; mia serve starts this itself")
     worker.add_argument("--parent", type=int, help=argparse.SUPPRESS)
     device = commands.add_parser("token", help="the tokens that devices use with the API")
@@ -222,8 +273,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return serve(args.port)
         if args.command == "service":
             return _service(args)
+        if args.command == "remote":
+            return _remote(args)
         if args.command == "mcp":
-            return _mcp(args.url)
+            return _mcp(args.url, args.ca)
         if args.command == "worker":
             from mia.worker import run
 

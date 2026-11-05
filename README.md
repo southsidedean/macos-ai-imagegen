@@ -11,8 +11,8 @@ AI images on your own Mac: mia runs open models such as FLUX natively on Apple S
 requests from a web page, a REST API, an MCP server, or the command line. An AI assistant or a
 script on another machine on your network can ask for a picture the same way you can at the Mac.
 
-**It's early:** so far mia makes images from the command line, a local REST API, and an MCP server, on the Mac
-itself. Remote access and the web page are still to come.
+**It's early:** so far mia makes images from the command line, a REST API, and an MCP server, on the Mac itself or from
+your other devices over HTTPS. The web page is still to come.
 [docs/roadmap.md](docs/roadmap.md) says where it stands.
 
 ## What it will do
@@ -47,6 +47,7 @@ took about 30 seconds on our test Mac. `uv run mia --help` lists the rest.
 - [docs/api.md](docs/api.md): the REST API, with examples
 - [docs/mcp.md](docs/mcp.md): connecting an AI assistant
 - [docs/service.md](docs/service.md): keeping mia running
+- [docs/remote.md](docs/remote.md): reaching mia from your other devices
 - [docs/roadmap.md](docs/roadmap.md): what's done, and what's next
 - [PLAN.md](PLAN.md): every decision, and the test results behind them
 - [SECURITY.md](SECURITY.md): how to report a problem

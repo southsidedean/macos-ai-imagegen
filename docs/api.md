@@ -1,7 +1,7 @@
 # The REST API
 
 Scripts and other programs on your Mac can ask mia for images through its API. It listens only on this
-Mac for now. Reaching it from another machine comes in 0.4, with HTTPS.
+Mac until you turn on [HTTPS for your other devices](remote.md).
 
 ## Start here
 

@@ -1,22 +1,25 @@
 """The REST API. It never imports an ML package: it reads and writes the database, and the worker does the rest.
 
 Everything but PUBLIC needs a token, and the Guard checks it before anything else runs, so a route added later
-can't be left open by accident. /mcp sits behind it too. It listens only on this Mac for now: remote access
-arrives in 0.4, with HTTPS.
+can't be left open by accident. /mcp sits behind it too. It listens only on this Mac, unless mia remote on has added
+HTTPS for your own network. Plain HTTP stays on this Mac alone.
 """
 
 import asyncio
+import contextlib
 import json
+import logging
 import re
 import resource
 import shutil
 import socket
+import ssl
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, MutableMapping
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -32,13 +35,15 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ConfigDict, Field
 from uvicorn.protocols.http.h11_impl import H11Protocol
 
-from mia import __version__, catalog, history, jobs, mcp_server, models, paths, service, tokens
+from mia import __version__, catalog, history, jobs, mcp_server, models, paths, remote, service, tokens
 from mia.engine import MAX_PROMPT, MiaError, Request, random_seed
 from mia.generate import engine_is_fake
 from mia.supervisor import Supervisor
 
 HOST = "127.0.0.1"
 PORT = 8765
+# Only for HTTPS, once you've turned it on, and only addresses that are nearby get in.
+ANYWHERE = "0.0.0.0"  # noqa: S104  # nosec B104
 # Exact matches only. Loose parsing would let "localhost:x@example.com" through.
 LOCAL_NAME = r"(?:127\.0\.0\.1|localhost|\[::1\])"
 ALLOWED_HOST = re.compile(rf"{LOCAL_NAME}(?::[0-9]{{1,5}})?", re.IGNORECASE)
@@ -54,6 +59,11 @@ REFUSED_SIGN_INS_PER_MINUTE = 30
 MAX_TRACKED = 10_000  # how many devices and addresses the limiter remembers: many addresses mustn't use up memory
 MAX_CONNECTIONS, MAX_CONNECTIONS_PER_ADDRESS = 256, 64
 ARRIVAL_SECONDS = 15.0  # how long a request has to arrive, from its first byte or from connecting
+# A handshake is the one thing a stranger can make mia do before any other limit applies. A device on a LAN needs moments.
+HANDSHAKE_SECONDS = 5.0
+MAX_HANDSHAKES, MAX_HANDSHAKES_PER_ADDRESS = 64, 16
+TLS_CLOSE_SECONDS = 5.0  # asyncio waits 30 by default for the other side to agree to close
+RENEW_CHECK_SECONDS = 6 * 3600  # a Mac used as a server can run for longer than its certificate lasts
 PUBLIC = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json")}
 DEVICE = "mia.device"  # where the Guard leaves the device it signed in, in the request's scope
 EVENT_POLL_SECONDS = 0.5
@@ -66,6 +76,7 @@ ID = re.compile(r"[0-9a-f]{12}")
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
+logger = logging.getLogger("uvicorn.error")
 
 
 class Connection(H11Protocol):
@@ -109,9 +120,10 @@ class Guard:
     its own name at this Mac still can't get in, and MCP's spec requires the same check. The token check is here
     because FastAPI reads a body before a route's own checks, which would be work done for strangers."""
 
-    def __init__(self, app: Callable[[Scope, Receive, Send], Awaitable[None]], limiter: "Limiter") -> None:
+    def __init__(self, app: Callable[[Scope, Receive, Send], Awaitable[None]], limiter: "Limiter", names: re.Pattern[str] | None = None) -> None:
         self.app = app
         self.limiter = limiter
+        self.names = names
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -128,7 +140,8 @@ class Guard:
                 message["headers"] = sent
             await send(message)
 
-        refusal = self._refuse(scope["method"], pairs)
+        # The names you chose count only over HTTPS, so nothing can use them to reach the plain HTTP on this Mac.
+        refusal = self._refuse(scope["method"], pairs, self.names if scope.get("scheme") == "https" else None)
         if refusal is None and (scope["method"], scope["path"]) not in PUBLIC:
             refusal = await self._sign_in(scope, pairs)
         if refusal is not None:
@@ -154,12 +167,13 @@ class Guard:
         return None
 
     @staticmethod
-    def _refuse(method: str, pairs: list[tuple[str, str]]) -> JSONResponse | None:
+    def _refuse(method: str, pairs: list[tuple[str, str]], names: re.Pattern[str] | None = None) -> JSONResponse | None:
         hosts = [value for key, value in pairs if key == "host"]
-        if len(hosts) != 1 or not ALLOWED_HOST.fullmatch(hosts[0]):
+        if len(hosts) != 1 or not (ALLOWED_HOST.fullmatch(hosts[0]) or (names and names.fullmatch(hosts[0]))):
             return JSONResponse({"detail": "this Host isn't allowed"}, status.HTTP_403_FORBIDDEN)
         origins = [value for key, value in pairs if key == "origin"]
-        if len(origins) > 1 or (origins and not ALLOWED_ORIGIN.fullmatch(origins[0])):
+        named = names and origins and origins[0][:8].lower() == "https://" and names.fullmatch(origins[0][8:])
+        if len(origins) > 1 or (origins and not (ALLOWED_ORIGIN.fullmatch(origins[0]) or named)):
             return JSONResponse({"detail": "this Origin isn't allowed"}, status.HTTP_403_FORBIDDEN)
         # A chunked body wins over Content-Length in the HTTP parser, so it would get past the limit below, and
         # FastAPI reads a body before it checks a token. Nothing that uses this API needs one.
@@ -310,7 +324,12 @@ async def _events(job_id: str, device_id: str) -> AsyncIterator[str]:
         await asyncio.sleep(EVENT_POLL_SECONDS)
 
 
-def create_app(run_worker: bool = False) -> FastAPI:
+def _names_pattern(names: Iterable[str]) -> re.Pattern[str] | None:
+    chosen = "|".join(re.escape(name) for name in names)
+    return re.compile(rf"(?:{chosen})(?::[0-9]{{1,5}})?", re.IGNORECASE) if chosen else None
+
+
+def create_app(run_worker: bool = False, names: Iterable[str] = ()) -> FastAPI:
     limiter = Limiter()
     streams = Streams()
     supervisor = Supervisor() if run_worker else None
@@ -330,7 +349,7 @@ def create_app(run_worker: bool = False) -> FastAPI:
 
     # No /docs pages: they load scripts from a CDN, and this server shouldn't reach out or host them.
     app = FastAPI(title="mia", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None)
-    app.add_middleware(Guard, limiter=limiter)
+    app.add_middleware(Guard, limiter=limiter, names=_names_pattern(names))
 
     @app.exception_handler(RequestValidationError)
     async def _invalid(_request: Any, problem: RequestValidationError) -> JSONResponse:
@@ -540,17 +559,103 @@ def _config(app: FastAPI) -> uvicorn.Config:
     )
 
 
+@dataclass(frozen=True)
+class Secure:
+    listener: socket.socket
+    context: ssl.SSLContext
+    settings: remote.Settings
+
+
+class Server(uvicorn.Server):
+    """uvicorn, plus the HTTPS listener. mia accepts those connections itself because asyncio does a handshake before
+    any protocol sees a connection, where neither Connection's deadline nor its caps reach, and uvicorn can't set a time
+    limit on one. Counting here, ahead of the handshake, covers that gap."""
+
+    def __init__(self, config: uvicorn.Config, secure: Secure | None = None) -> None:
+        super().__init__(config)
+        self.secure = secure
+        self._background: list[asyncio.Task[None]] = []
+        self._handshakes: dict[asyncio.Task[None], str] = {}
+
+    async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+        await super().startup(sockets)
+        if self.secure:
+            self.secure.listener.setblocking(False)
+            self.secure.listener.listen(self.config.backlog)
+            self._background = [asyncio.create_task(self._accept(self.secure)), asyncio.create_task(self._renew(self.secure))]
+
+    async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        for task in (*self._background, *self._handshakes):
+            task.cancel()
+        if self.secure:
+            self.secure.listener.close()
+        await super().shutdown(sockets)
+
+    async def _accept(self, secure: Secure) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                held, peer = await loop.sock_accept(secure.listener)
+            except OSError:  # out of files, most likely: wait for some to come back, as asyncio's own server does
+                await asyncio.sleep(1)
+                continue
+            address = peer[0]
+            waiting = sum(1 for other in self._handshakes.values() if other == address)
+            if not remote.nearby(address) or len(self._handshakes) >= MAX_HANDSHAKES or waiting >= MAX_HANDSHAKES_PER_ADDRESS:
+                held.close()
+                continue
+            task = asyncio.create_task(self._shake_hands(held, secure))
+            self._handshakes[task] = address
+            task.add_done_callback(self._handshakes.pop)
+
+    async def _shake_hands(self, held: socket.socket, secure: Secure) -> None:
+        def connection() -> asyncio.Protocol:
+            return self.config.http_protocol_class(config=self.config, server_state=self.server_state, app_state=self.lifespan.state)  # type: ignore[call-arg]
+
+        # OSError is a client that doesn't trust mia, doesn't speak TLS, or ran out of time. asyncio has closed it.
+        with contextlib.suppress(OSError):
+            await asyncio.get_running_loop().connect_accepted_socket(
+                connection, held, ssl=secure.context, ssl_handshake_timeout=HANDSHAKE_SECONDS, ssl_shutdown_timeout=TLS_CLOSE_SECONDS
+            )
+
+    async def _renew(self, secure: Secure) -> None:
+        while True:
+            await asyncio.sleep(RENEW_CHECK_SECONDS)
+            try:
+                if await asyncio.to_thread(remote.renew, secure.settings):
+                    remote.reload(secure.context)
+            except (MiaError, OSError, ValueError) as problem:
+                logger.warning("mia couldn't renew its HTTPS certificate: %s", problem)
+
+
+def _bound(host: str, port: int) -> socket.socket:
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        listener.bind((host, port))
+    except OSError as taken:
+        listener.close()
+        raise MiaError(f"port {port} is already in use, perhaps by another mia serve") from taken
+    return listener
+
+
+def _secure(port: int) -> Secure | None:
+    settings = remote.load()
+    if settings is None:
+        return None
+    if settings.port == port:
+        raise MiaError(f"HTTPS and this Mac's own HTTP can't share port {port}: run mia remote on --port with another")
+    remote.renew(settings)
+    return Secure(_bound(ANYWHERE, settings.port), remote.context(), settings)
+
+
 def serve(port: int = PORT) -> int:
     service.rotate_log()  # here too: a server that keeps failing to start never reaches the supervisor's check
     _raise_open_file_limit()
     # Bound before anything starts: uvicorn runs the app's startup first, so a second mia serve on a taken port
     # would otherwise start a supervisor, fail, and shut it down beside the first server's worker.
-    listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        listener.bind((HOST, port))
-    except OSError as taken:
-        listener.close()
-        raise MiaError(f"port {port} is already in use, perhaps by another mia serve") from taken
-    uvicorn.Server(_config(create_app(run_worker=True))).run(sockets=[listener])
+    listener = _bound(HOST, port)
+    secure = _secure(port)
+    app = create_app(run_worker=True, names=secure.settings.hosts if secure else ())
+    Server(_config(app), secure).run(sockets=[listener])
     return 0

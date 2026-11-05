@@ -2,6 +2,9 @@
 
 ## 0.4.0 (unreleased)
 
+- Your other devices can reach mia over HTTPS on your own network. `mia remote on` turns it on, using a certificate authority
+  of mia's own that each device trusts, and `mia mcp --ca` connects an assistant. It's off by default, and plain HTTP stays on
+  the Mac. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/remote.md) has the steps.
 - AI assistants can make and find images through MCP, at `/mcp` or through `mia mcp`, using the same tokens and limits as
   the API. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/mcp.md) shows how to connect one.
 - `mia service install` keeps mia running: it starts at login and comes back if it dies. `mia service status` and

@@ -38,7 +38,12 @@ Working today, and tested:
 - Deleting an image also deletes the job that made it. Finished jobs, which hold prompts, are forgotten after 30
   days.
 - The API can read or delete image files only in mia's own images folder.
-- The launchd service runs as you, listens only on this Mac, keeps its log private, and its file holds no token.
+- The launchd service runs as you, keeps its log private, and its file holds no token.
+- mia listens only on this Mac until you run `mia remote on`. Then it adds HTTPS for your own network, using TLS 1.3 and a
+  certificate authority of its own, and drops connections from anything but this Mac and the private address ranges. Plain
+  HTTP stays on this Mac. A handshake has 5 seconds, with at most 16 in progress from one address and 64 overall.
+- The authority's certificate limits it to `.local` names and the names you chose, so its stolen key couldn't pose as
+  another site's name. Its files are readable only by you.
 - The API process doesn't load the image engine, so a crash there can't take it down.
 - MCP tools are calls to the API with the assistant's own token, so its checks apply to them too. No tool can delete an
   image or change the models, and `mia mcp` won't send a token over plain HTTP to another machine.
@@ -50,6 +55,10 @@ Known limits:
 - Every process on your Mac shares one address, so one holding 64 connections or sending 30 bad tokens can make
   other programs on the Mac wait. It can't do that to other machines.
 - A device with a token can hold a connection open by reading an answer very slowly, up to the connection caps.
-
-Still to come, following the design in [PLAN.md](PLAN.md#security): remote access over HTTPS, in 0.4.
-Until then, there's no way to turn on access from another machine.
+- The authority can't be limited by address, because clients on BoringSSL, including Claude Code, then refuse its
+  certificates. So a stolen key could pose as a bare address to your devices.
+- With remote access on, anyone on your network can read `/v1/health`, which gives mia's version, and `/openapi.json`.
+- Someone on your network can make mia do handshakes, up to the limits above, and repeat them as fast as they finish, which
+  could slow mia down. How much hasn't been measured. They can't get further without a token.
+- The authority's key is a file only your account can read, not an item in the Keychain, so anything running as you could
+  read it. The same goes for your images and history.
