@@ -123,6 +123,15 @@ def _service(args: argparse.Namespace) -> int:
     if args.action == "install":
         service.install(args.port)
         print(f"mia is running on port {args.port}, and will start whenever you log in. Its log: {service.log_file()}")
+    elif args.action == "stop":
+        service.stop()
+        print("Stopped. It stays stopped until the next login, or mia service start. A job it was running has failed.")
+    elif args.action == "start":
+        service.start()
+        print("Started.")
+    elif args.action == "restart":
+        service.restart()
+        print("Restarted, running the mia that's installed now. A job it was running has failed, and waiting ones carry on.")
     elif args.action == "uninstall":
         print("Stopped and removed mia's service. Your images, history, and tokens are still there." if service.uninstall() else "mia's service wasn't installed.")
     else:
@@ -131,6 +140,8 @@ def _service(args: argparse.Namespace) -> int:
             print("not installed: mia service install sets it up")
             return 1
         print(f"installed, port {found.port}, " + (f"running as process {found.pid}" if found.pid else "not running") + (", answering" if found.answering else ", not answering"))
+        if found.version and found.version != __version__:
+            print(f"it's running mia {found.version}, and {__version__} is installed: mia service restart moves it on")
         print(f"log: {service.log_file()}")
         return 0 if found.answering else 1
     return 0
@@ -173,6 +184,9 @@ def _parser() -> argparse.ArgumentParser:
     steps = keeper.add_subparsers(dest="action")
     setup = steps.add_parser("install", help="start it now and at every login; installing again replaces it")
     setup.add_argument("--port", type=int, default=8765, help="default: %(default)s")
+    steps.add_parser("stop", help="stop it until the next login, or until you start it")
+    steps.add_parser("start", help="start it again after stopping it")
+    steps.add_parser("restart", help="run the mia that's installed now, as after upgrading")
     steps.add_parser("uninstall", help="stop it and remove it, keeping your images and tokens")
     steps.add_parser("status", help="whether it's running; the same as no action")
     assistant = commands.add_parser("mcp", help="connect an AI assistant to mia serve, over stdin and stdout")

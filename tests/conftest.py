@@ -55,7 +55,9 @@ def _fenced_sendto(self: socket.socket, data: Any, *args: Any) -> int:
 
 @pytest.fixture(autouse=True)
 def offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Applied to every test: only connections to this machine are allowed."""
+    """Applied to every test: only connections to this machine are allowed, and launchd's services can't be changed."""
+    # A test that lost its stand-in for launchctl once installed a real agent, which ran on after the test had ended.
+    monkeypatch.setattr("mia.service.LAUNCHCTL", "/nonexistent/launchctl")
     monkeypatch.setattr(socket.socket, "connect", _fenced_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", _fenced_connect_ex)
     monkeypatch.setattr(socket.socket, "sendto", _fenced_sendto)

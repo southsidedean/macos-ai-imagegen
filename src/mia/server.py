@@ -32,7 +32,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ConfigDict, Field
 from uvicorn.protocols.http.h11_impl import H11Protocol
 
-from mia import __version__, catalog, history, jobs, mcp_server, models, paths, tokens
+from mia import __version__, catalog, history, jobs, mcp_server, models, paths, service, tokens
 from mia.engine import MAX_PROMPT, MiaError, Request, random_seed
 from mia.generate import engine_is_fake
 from mia.supervisor import Supervisor
@@ -541,6 +541,7 @@ def _config(app: FastAPI) -> uvicorn.Config:
 
 
 def serve(port: int = PORT) -> int:
+    service.rotate_log()  # here too: a server that keeps failing to start never reaches the supervisor's check
     _raise_open_file_limit()
     # Bound before anything starts: uvicorn runs the app's startup first, so a second mia serve on a taken port
     # would otherwise start a supervisor, fail, and shut it down beside the first server's worker.

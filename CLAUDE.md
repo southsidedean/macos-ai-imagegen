@@ -47,6 +47,8 @@ This is the design from `PLAN.md`; these parts arrive release by release.
   blocking path.
 - mia runs natively, as one launchd user agent for `mia serve` (`service.py`). No containers: Docker on macOS has no
   Metal access. Tests use a stand-in for `launchctl`, and `scripts/real-engine.sh` installs a real agent under a test label.
+- The worker exits after `MIA_IDLE_SECONDS` (10 minutes) idle with a model loaded, and the supervisor starts an empty one,
+  because only a new process really hands back the memory. The supervisor also calls `service.rotate_log()`.
 - The worker holds `power.awake()` while a job runs, and only then. It's `caffeinate -w`, which ends if the worker dies.
 
 ## Commands

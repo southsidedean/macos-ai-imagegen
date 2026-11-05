@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from mia import gpu, jobs
+from mia import gpu, jobs, service
 
 CHECK_SECONDS = 1.0
 FIRST_BACKOFF, MAX_BACKOFF = 1.0, 60.0
@@ -25,6 +25,7 @@ CANCEL_GRACE = 60.0
 # on the monotonic clock, which stops while a Mac sleeps, so closing the lid doesn't count against a job.
 STALL_SECONDS = 1800.0
 STALLED = "the job made no progress for 30 minutes, so mia restarted the worker"
+LOG_CHECK_SECONDS = 60.0
 STOP_WAIT = 30.0
 
 
@@ -61,6 +62,7 @@ class Supervisor:
         self._progress: tuple[str, int] | None = None
         self._progress_since = 0.0
         self._ended_because: str | None = None
+        self._log_checked = 0.0
 
     def start(self) -> None:
         self._thread.start()
@@ -83,6 +85,9 @@ class Supervisor:
             self._stopping.wait(CHECK_SECONDS)
 
     def _check(self) -> None:
+        if time.monotonic() - self._log_checked > LOG_CHECK_SECONDS:
+            self._log_checked = time.monotonic()
+            service.rotate_log()
         if self._process is None:
             if time.monotonic() >= self._not_before:
                 self._started_at = time.monotonic()

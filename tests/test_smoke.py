@@ -390,6 +390,23 @@ def test_an_assistant_makes_an_image_through_the_stdio_bridge(service: Service) 
     _check_the_walk(*asyncio.run(main()))
 
 
+def test_an_idle_worker_gives_back_its_memory_and_the_next_job_still_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIA_IDLE_SECONDS", "1")
+    service = Service(tmp_path / "mia")
+    try:
+        assert service.finished(service.submit(SHORT))["state"] == "done"
+        first = service.worker_pid()
+        wait_for(lambda: service.worker_pid() != first)
+        assert not alive(first)
+        job = service.finished(service.submit(SHORT))
+        assert job["state"] == "done"
+        status, data = service.request("GET", "/v1/status")
+        assert status == 200 and json.loads(data)["jobs"]["failed"] == 0
+        # With nothing loaded, the new worker has nothing to give back, and stays for as long as it's idle.
+    finally:
+        service.stop()
+
+
 def test_nothing_private_reaches_the_servers_output(tmp_path: Path) -> None:
     home = tmp_path / "mia"
     env = {**os.environ, "MIA_HOME": str(home), "MIA_ENGINE": "fake"}

@@ -6,7 +6,12 @@
   the API. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/mcp.md) shows how to connect one.
 - `mia service install` keeps mia running: it starts at login and comes back if it dies. `mia service status` and
   `mia service uninstall` go with it.
+- `mia service stop`, `start`, and `restart`. `mia doctor` and `mia service status` say if the service is running an
+  older version than the one installed.
 - The Mac stays awake while a job runs, and can sleep again when it's done.
+- A model that hasn't been used for 10 minutes gives back its memory, and the next job loads it again. `MIA_IDLE_SECONDS`
+  changes the wait.
+- The service's log stays small: above 10 MB, it moves aside, and only one old log is kept.
 - Each new picture gets a small JPEG preview, at `GET /v1/images/{id}/preview`.
 - Connections have limits. A request has 15 seconds to arrive, and connections are capped at 64 from one address
   and 256 overall.
