@@ -9,6 +9,8 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -169,15 +171,15 @@ def test_uninstalling_removes_the_agent_and_leaves_everything_else(launchctl: La
 
 
 def test_status_reports_what_launchd_and_the_server_say(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert service.status() == service.Status(False, None, None, False)
+    assert service.status() == service.Status(False, None, None, None)
     assert launchctl.calls == []  # with nothing installed, there's nothing to ask
     service.install(8765)
-    monkeypatch.setattr(service, "_answers", lambda port: port == 8765)
+    monkeypatch.setattr(service, "_running_version", lambda port: "1.2.3" if port == 8765 else None)
     launchctl.answers["print"] = [Launchctl.result(0, "local.mia.serve = {\n\tstate = running\n\tpid = 4242\n\tinherited = {\n}\n")]
-    assert service.status() == service.Status(True, 4242, 8765, True)
+    assert service.status() == service.Status(True, 4242, 8765, "1.2.3")
     launchctl.answers["print"] = [Launchctl.result(113, err="Could not find service")]
-    monkeypatch.setattr(service, "_answers", lambda _port: False)
-    assert service.status() == service.Status(True, None, 8765, False)
+    monkeypatch.setattr(service, "_running_version", lambda _port: None)
+    assert service.status() == service.Status(True, None, 8765, None)
 
 
 def test_the_commands(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -186,7 +188,7 @@ def test_the_commands(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch, cap
     assert "not installed" in capsys.readouterr().out
     assert cli.main(["service", "install", "--port", str(port)]) == 0
     assert str(port) in capsys.readouterr().out
-    monkeypatch.setattr(service, "_answers", lambda _port: False)
+    monkeypatch.setattr(service, "_running_version", lambda _port: None)
     assert cli.main(["service", "status"]) == 1  # a script can tell that it isn't working
     assert "not answering" in capsys.readouterr().out
     assert cli.main(["service", "uninstall"]) == 0
@@ -195,11 +197,296 @@ def test_the_commands(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch, cap
     assert "wasn't installed" in capsys.readouterr().out
 
 
+def test_no_test_can_reach_the_real_launchctl() -> None:
+    assert service.LAUNCHCTL == "/nonexistent/launchctl"
+    with pytest.raises((OSError, MiaError)):
+        service.install(free_port())
+
+
 def test_mia_service_refuses_anywhere_but_a_mac(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     with pytest.raises(MiaError, match="macOS only"):
         service.install(free_port())
     assert not service.plist_file().exists()
+
+
+# Stopping, starting, and restarting.
+
+
+def test_stopping_keeps_the_file_so_it_comes_back_at_login(launchctl: Launchctl) -> None:
+    service.install(free_port())
+    launchctl.calls.clear()
+    service.stop()
+    assert launchctl.verbs() == ["bootout"]
+    assert service.plist_file().exists()
+
+
+def test_starting_something_already_loaded_changes_nothing(launchctl: Launchctl) -> None:
+    service.install(free_port())
+    launchctl.calls.clear()
+    launchctl.answers["print"] = [Launchctl.result(0, "pid = 4242")]
+    service.start()
+    assert launchctl.verbs() == ["print"]
+
+
+def test_starting_something_stopped_loads_it(launchctl: Launchctl) -> None:
+    service.install(free_port())
+    launchctl.calls.clear()
+    launchctl.answers["print"] = [Launchctl.result(113, err="Could not find service")]
+    service.start()
+    assert launchctl.verbs() == ["print", "bootstrap"]
+
+
+def test_restarting_keeps_the_file_and_runs_it_again(launchctl: Launchctl) -> None:
+    port = free_port()
+    service.install(port)
+    before = service.plist_file().read_bytes()
+    launchctl.calls.clear()
+    service.restart()
+    assert launchctl.verbs() == ["bootout", "bootstrap"]
+    assert service.plist_file().read_bytes() == before
+
+
+@pytest.mark.parametrize("action", ["stop", "start", "restart"])
+def test_those_say_so_when_it_isnt_installed(launchctl: Launchctl, capsys: pytest.CaptureFixture[str], action: str) -> None:
+    assert cli.main(["service", action]) == 1
+    assert "mia service install" in capsys.readouterr().err
+    assert launchctl.calls == []
+
+
+def test_those_commands_say_what_happens_to_a_job(launchctl: Launchctl, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["service", "install", "--port", str(free_port())]) == 0
+    capsys.readouterr()
+    for action in ("restart", "stop"):
+        assert cli.main(["service", action]) == 0
+        assert "job" in capsys.readouterr().out
+
+
+def test_status_says_when_older_code_is_running(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    service.install(free_port())
+    monkeypatch.setattr(service, "_running_version", lambda _port: "0.0.1")
+    assert cli.main(["service"]) == 0
+    assert "mia service restart" in capsys.readouterr().out
+
+
+def test_a_running_version_comes_from_a_real_answer() -> None:
+    import http.server
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            body = b'{"status": "ok", "version": "1.2.3"}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_arguments: Any) -> None:
+            pass
+
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health) as answering:
+        threading.Thread(target=answering.serve_forever, daemon=True).start()
+        try:
+            assert service._running_version(answering.server_address[1]) == "1.2.3"
+        finally:
+            answering.shutdown()
+    assert service._running_version(free_port()) is None
+
+
+# Keeping the log small.
+
+
+@contextmanager
+def stderr_into_the_log() -> Iterator[Path]:
+    """Points stderr at the log, appending, as launchd does. Within the test: pytest swaps stderr between its phases."""
+    log = service.log_file()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    held = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    kept = os.dup(2)
+    os.dup2(held, 2)
+    try:
+        yield log
+    finally:
+        os.dup2(kept, 2)
+        os.close(kept)
+        os.close(held)
+
+
+def test_a_big_log_moves_aside_and_writing_carries_on_from_the_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "MAX_LOG_BYTES", 100)
+    with stderr_into_the_log() as log:
+        os.write(2, b"x" * 101)
+        service.rotate_log()
+        assert log.with_name("serve.log.1").read_bytes() == b"x" * 101
+        assert log.stat().st_size == 0
+        os.write(2, b"next")
+        assert log.read_bytes() == b"next"  # no gap from the old length, which would leave it as large as before
+        assert log.with_name("serve.log.1").stat().st_mode & 0o077 == 0
+        assert not log.with_name("serve.log.partial").exists()
+
+
+def test_only_one_old_log_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "MAX_LOG_BYTES", 100)
+    with stderr_into_the_log() as log:
+        for fill in (b"a", b"b", b"c"):
+            os.write(2, fill * 101)
+            service.rotate_log()
+        assert log.with_name("serve.log.1").read_bytes() == b"c" * 101
+        assert sorted(path.name for path in log.parent.iterdir()) == ["serve.log", "serve.log.1"]
+
+
+def test_a_small_log_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "MAX_LOG_BYTES", 100)
+    with stderr_into_the_log() as log:
+        os.write(2, b"x" * 100)
+        service.rotate_log()
+        assert log.stat().st_size == 100
+        assert not log.with_name("serve.log.1").exists()
+
+
+def test_a_log_this_process_isnt_writing_to_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A mia serve started by hand, beside the log of a service that isn't running.
+    monkeypatch.setattr(service, "MAX_LOG_BYTES", 100)
+    log = service.log_file()
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"x" * 101)
+    service.rotate_log()
+    assert log.stat().st_size == 101
+
+
+def test_no_log_or_no_stderr_is_no_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    service.rotate_log()
+    log = service.log_file()
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"x" * 101)
+    monkeypatch.setattr(service, "MAX_LOG_BYTES", 100)
+
+    def closed(_descriptor: int) -> os.stat_result:
+        raise OSError("closed")
+
+    monkeypatch.setattr(os, "fstat", closed)
+    service.rotate_log()
+    assert log.stat().st_size == 101
+
+
+def test_the_supervisor_checks_the_log_now_and_then(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia import supervisor as supervising
+
+    clock = [1000.0]
+    checks: list[float] = []
+    monkeypatch.setattr("mia.supervisor.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(service, "rotate_log", lambda: checks.append(clock[0]))
+    watcher = supervising.Supervisor()
+
+    class Alive:
+        def poll(self) -> None:
+            return None
+
+    watcher._process = Alive()  # type: ignore[assignment]
+    watcher._check()
+    clock[0] += 1
+    watcher._check()
+    assert len(checks) == 1
+    clock[0] += supervising.LOG_CHECK_SECONDS
+    watcher._check()
+    assert len(checks) == 2
+
+
+def test_a_server_that_cant_start_still_keeps_its_log_small(monkeypatch: pytest.MonkeyPatch) -> None:
+    # launchd restarts it every 10 seconds, so this could go on for months, and it never reaches the supervisor.
+    from mia import server
+
+    checks: list[int] = []
+    monkeypatch.setattr(service, "rotate_log", lambda: checks.append(1))
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        with pytest.raises(MiaError, match="in use"):
+            server.serve(int(taken.getsockname()[1]))
+    assert checks == [1]
+
+
+# Handing back memory.
+
+
+def _idle_worker(monkeypatch: pytest.MonkeyPatch, seconds: str = "1000") -> Worker:
+    monkeypatch.setenv("MIA_IDLE_SECONDS", seconds)
+    return Worker(lambda _model: FakeEngine())
+
+
+def test_a_worker_with_a_model_loaded_goes_idle_after_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("mia.worker.time.monotonic", lambda: clock[0])
+    running = _idle_worker(monkeypatch)
+    jobs.submit(Request("a fox", 1, 512, 512, 1), catalog.DEFAULT.id)
+    assert running.step() is True
+    clock[0] += 1000
+    assert not running.idle_too_long()  # at the limit, not past it
+    clock[0] += 1
+    assert running.idle_too_long()
+
+
+def test_each_job_starts_the_wait_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("mia.worker.time.monotonic", lambda: clock[0])
+    running = _idle_worker(monkeypatch)
+    for _ in range(2):
+        jobs.submit(Request("a fox", 1, 512, 512, 1), catalog.DEFAULT.id)
+        running.step()
+        clock[0] += 999
+        assert not running.idle_too_long()
+
+
+def test_a_worker_with_nothing_loaded_stays(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("mia.worker.time.monotonic", lambda: clock[0])
+    running = _idle_worker(monkeypatch)
+    clock[0] += 10**6
+    assert not running.idle_too_long()
+
+
+def test_a_failed_job_counts_as_activity_and_a_failed_load_stays_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("mia.worker.time.monotonic", lambda: clock[0])
+    monkeypatch.setenv("MIA_IDLE_SECONDS", "1000")
+
+    def no_model(_model: catalog.Model) -> FakeEngine:
+        raise MiaError("it isn't downloaded")
+
+    running = Worker(no_model)
+    jobs.submit(Request("a fox", 1, 512, 512, 1), catalog.DEFAULT.id)
+    running.step()
+    clock[0] += 10**6
+    assert not running.idle_too_long()
+
+
+@pytest.mark.parametrize(("value", "expected"), [("120", 120.0), ("0.5", 0.5), ("0", 600.0), ("-1", 600.0), ("soon", 600.0), ("", 600.0)])
+def test_the_idle_setting(monkeypatch: pytest.MonkeyPatch, value: str, expected: float) -> None:
+    from mia import worker as working
+
+    monkeypatch.setenv("MIA_IDLE_SECONDS", value)
+    assert working.idle_seconds() == expected
+
+
+def test_the_default_wait_is_ten_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia import worker as working
+
+    monkeypatch.delenv("MIA_IDLE_SECONDS", raising=False)
+    assert working.idle_seconds() == 600
+
+
+def test_the_agent_gets_the_idle_setting_as_it_was_given(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch) -> None:
+    # It's a number, and treating it as a path turned it into a folder, which the worker then ignored.
+    monkeypatch.setenv("MIA_IDLE_SECONDS", "120")
+    service.install(free_port())
+    assert written()["EnvironmentVariables"]["MIA_IDLE_SECONDS"] == "120"
+
+
+def test_a_refusal_for_the_gpu_says_how_to_stop_the_service() -> None:
+    from mia import gpu
+
+    with gpu.hold(), pytest.raises(gpu.Busy, match="mia service stop"), gpu.hold():
+        pass
 
 
 # The power assertion.

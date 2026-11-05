@@ -6,7 +6,7 @@
 # It uses the real models folder (or MIA_MODELS), and downloads the default model if it's missing, about
 # 4.6 GB. Images, history, and the test's own server go in a throwaway folder and on a spare port, so your
 # own history and any mia serve you have running are left alone, though it can't share the GPU with one.
-# It also installs and removes a real launchd agent, under a label of its own. It takes about seven minutes. Every line it prints is safe to paste into a pull request: it shows no paths.
+# It also installs and removes a real launchd agent, under a label of its own. It takes about ten minutes. Every line it prints is safe to paste into a pull request: it shows no paths.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -234,6 +234,7 @@ answering() {
 	done
 }
 agent=yes
+export MIA_IDLE_SECONDS=20 # the agent's copy, so that check 18 doesn't take ten minutes
 "$mia" service install --port "$port" >/dev/null
 if answering; then pass "13. launchd started the service"; else fail "13. the service didn't start"; fi
 
@@ -277,6 +278,62 @@ if [ -n "$now" ] && [ "$result" = "done" ]; then
 else
 	fail "16. after killing the server: process '$now', job $result"
 fi
+
+# An idle worker hands back the model's memory, and the next job loads it again. footprint rather than ps, because
+# a process's resident size leaves out most of what MLX holds for the GPU.
+footprint_of() { footprint -pid "$1" 2>/dev/null | sed -n 's/.*Footprint: //p' | head -1 | sed 's/ (.*//'; }
+began=$(date +%s)
+job=$(call POST /v1/jobs "$body" | field id)
+result=$(wait_until_finished "$job")
+warm=$(($(date +%s) - began))
+loaded=$(cat "$MIA_HOME/gpu.lock")
+loaded_size=$(footprint_of "$loaded")
+tries=0
+until [ "$(cat "$MIA_HOME/gpu.lock")" != "$loaded" ] || [ "$tries" -gt 120 ]; do
+	tries=$((tries + 1))
+	sleep 0.5
+done
+sleep 1
+idle=$(cat "$MIA_HOME/gpu.lock")
+idle_size=$(footprint_of "$idle")
+began=$(date +%s)
+job=$(call POST /v1/jobs "$body" | field id)
+result=$(wait_until_finished "$job")
+took=$(($(date +%s) - began))
+case "$idle_size" in
+*GB) small=no ;;
+*) small=yes ;;
+esac
+if [ "$idle" != "$loaded" ] && [ -n "$idle_size" ] && [ "$small" = yes ] && [ "$result" = "done" ]; then
+	pass "18. idle, memory went from $loaded_size to $idle_size. A job took $warm seconds with the model loaded, and $took after"
+else
+	fail "18. going idle: worker $loaded then $idle, from $loaded_size to $idle_size, next job $result"
+fi
+
+# Stopping, starting, and moving on to the installed code, with launchd for real.
+"$mia" service stop >/dev/null
+sleep 1
+if curl -fsS "$base/v1/health" >/dev/null 2>&1 || [ ! -e "$agent_file" ]; then
+	fail "19. stopping left it answering, or removed its file"
+else
+	"$mia" service start >/dev/null
+	if answering; then pass "19. it stopped and started again, keeping its file"; else fail "19. it didn't start again"; fi
+fi
+
+# A log that has grown too large moves aside when the server starts, and what comes next starts from nothing.
+dd if=/dev/zero bs=1048576 count=11 2>/dev/null >>"$MIA_HOME/logs/serve.log"
+"$mia" service restart >/dev/null
+answering || true
+job=$(call POST /v1/jobs "$body" | field id)
+result=$(wait_until_finished "$job")
+log_bytes=$(wc -c <"$MIA_HOME/logs/serve.log" | tr -d ' ')
+old_bytes=$(wc -c <"$MIA_HOME/logs/serve.log.1" | tr -d ' ' || echo 0)
+if [ "$result" = "done" ] && [ "$log_bytes" -gt 0 ] && [ "$log_bytes" -lt 1048576 ] && [ "$old_bytes" -gt 11000000 ]; then
+	pass "20. a large log moved aside, and the new one has $log_bytes bytes after a job"
+else
+	fail "20. the log: job $result, $log_bytes bytes, old one $old_bytes bytes"
+fi
+if grep -aq "$prompt" "$MIA_HOME/logs/serve.log"; then fail "20b. the prompt is in the log"; else pass "20b. the prompt isn't in the log"; fi
 
 "$mia" service uninstall >/dev/null
 agent=""

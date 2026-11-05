@@ -43,7 +43,8 @@ def hold(wait_while: Callable[[], bool] | None = None, briefly: bool = False) ->
             except BlockingIOError:
                 if wait_while is None or not wait_while():
                     raise Busy(
-                        "another mia process is using the GPU. If mia serve is running, send this through its API"
+                        "another mia process is using the GPU. If mia serve is running, send this through its API, or stop it first: "
+                        "mia service stop, if it's running as a service"
                     ) from None
                 time.sleep(WAIT_SECONDS)
         if not briefly:

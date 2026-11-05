@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from mia import __version__, cli, doctor, paths
+from mia import __version__, cli, doctor, paths, service
 
 READY = doctor.Facts(
     system="Darwin",
@@ -98,3 +99,38 @@ def test_the_command_needs_a_subcommand_and_knows_its_version(capsys: pytest.Cap
     with pytest.raises(SystemExit):
         cli.main(["--version"])
     assert __version__ in capsys.readouterr().out
+
+
+def _with_service(state: service.Status | None) -> doctor.Facts:
+    return replace(READY, service=state)
+
+
+def test_no_launchd_means_no_finding_about_it() -> None:
+    assert "Service" not in {finding.name for finding in doctor.findings(READY)}
+
+
+def test_a_service_that_isnt_installed_is_only_information() -> None:
+    assert status(_with_service(service.Status(False, None, None, None)), "Service") == doctor.INFO
+
+
+def test_a_healthy_service_passes() -> None:
+    assert status(_with_service(service.Status(True, 1, 8765, __version__)), "Service") == doctor.PASS
+
+
+def test_a_service_that_doesnt_answer_only_warns() -> None:
+    finding = next(f for f in doctor.findings(_with_service(service.Status(True, None, 8765, None))) if f.name == "Service")
+    assert finding.status == doctor.WARN and "not answering" in finding.detail
+
+
+def test_older_code_running_says_what_to_do() -> None:
+    finding = next(f for f in doctor.findings(_with_service(service.Status(True, 1, 8765, "0.0.1"))) if f.name == "Service")
+    assert finding.status == doctor.WARN and "mia service restart" in finding.detail
+
+
+def test_trouble_asking_launchd_doesnt_stop_the_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken() -> service.Status:
+        raise OSError("no launchctl")
+
+    monkeypatch.setattr(service, "status", broken)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert doctor._service_state() is None

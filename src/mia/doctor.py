@@ -11,11 +11,13 @@ import importlib.util
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from mia import __version__, paths
+from mia import __version__, paths, service
+from mia.engine import MiaError
 
 GB = 1024**3
 # What the engine installs on: mflux needs sentencepiece, which has no wheels for Python 3.15 yet.
@@ -42,6 +44,7 @@ class Facts:
     disk_free_gb: float | None
     engines: dict[str, bool]
     models: int
+    service: service.Status | None = None  # None where there's no launchd to ask
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,15 @@ def _count_models(models: Path) -> int:
         return 0
 
 
+def _service_state() -> service.Status | None:
+    if sys.platform != "darwin":
+        return None
+    try:
+        return service.status()
+    except (MiaError, OSError, subprocess.SubprocessError):  # it's only one finding: doctor has to get to the rest
+        return None
+
+
 def gather() -> Facts:
     home = paths.home_folder()
     return Facts(
@@ -87,6 +99,7 @@ def gather() -> Facts:
         disk_free_gb=_disk_free_gb(home),
         engines={name: importlib.util.find_spec(name) is not None for name in ENGINES},
         models=_count_models(paths.models_folder()),
+        service=_service_state(),
     )
 
 
@@ -131,6 +144,16 @@ def _engines(facts: Facts) -> Finding:
     return Finding(PASS, "Image engine", "installed")
 
 
+def _service(state: service.Status) -> Finding:
+    if not state.installed:
+        return Finding(INFO, "Service", "not installed; mia service install keeps mia running")
+    if not state.answering:
+        return Finding(WARN, "Service", f"installed, but not answering on port {state.port}; see mia service status")
+    if state.version != __version__:
+        return Finding(WARN, "Service", f"running mia {state.version}, and {__version__} is installed; run mia service restart")
+    return Finding(PASS, "Service", f"running on port {state.port}")
+
+
 def findings(facts: Facts) -> list[Finding]:
     return [
         _machine(facts),
@@ -140,6 +163,7 @@ def findings(facts: Facts) -> list[Finding]:
         _engines(facts),
         Finding(INFO, "mia's folder", f"{facts.folder} ({'found' if facts.folder.exists() else 'not made yet'})"),
         Finding(INFO, "Models", f"{facts.models} in the models folder"),
+        *([_service(facts.service)] if facts.service else []),
     ]
 
 

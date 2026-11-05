@@ -22,12 +22,22 @@ from mia.engine import Cancelled, Engine, MiaError, Request
 from mia.generate import generate, load_engine, new_image_id
 
 POLL_SECONDS = 0.5
-RESTART_FOR_MODEL = 0  # an ordinary exit: whatever supervises the worker starts a new one
+RESTART_FOR_MODEL = 0  # an ordinary exit, for another model or to free memory: whatever supervises it starts a new one
 STOPPED = "mia was stopped while this job was running"
 IMAGE_ID = re.compile(r"[0-9a-f]{12}")
 PARTIAL = re.compile(r"\.[0-9a-f]{12}\.partial\.png")
 PARTIAL_PREVIEW = re.compile(r"\.[0-9a-f]{12}\.partial\.jpg")
 PRUNE_SECONDS = 3600
+IDLE_SECONDS = 600
+
+
+def idle_seconds() -> float:
+    """How long a loaded model waits for another job before its memory goes back. MIA_IDLE_SECONDS changes it."""
+    try:
+        chosen = float(os.environ.get("MIA_IDLE_SECONDS", IDLE_SECONDS))
+    except ValueError:
+        return IDLE_SECONDS
+    return chosen if chosen > 0 else IDLE_SECONDS
 
 
 class NewModelNeeded(Exception):
@@ -39,7 +49,12 @@ class Worker:
         self._loader = loader
         self._engine: Engine | None = None
         self._model: str | None = None
+        self._last_job = time.monotonic()
         self.stopping = False
+
+    def idle_too_long(self) -> bool:
+        """Only with a model loaded: a worker that hasn't got one holds almost nothing, and has nothing to give back."""
+        return self._engine is not None and time.monotonic() - self._last_job > idle_seconds()
 
     def step(self) -> bool:
         """Runs the next job, if there is one. Returns whether it did."""
@@ -82,6 +97,8 @@ class Worker:
             # Frames and the error's type only: an error's message can quote its input, here the prompt.
             _log(f"job {job.id} failed: {type(crash).__name__}\n{''.join(traceback.format_tb(crash.__traceback__))}")
             jobs.fail(job.id, f"the engine failed with {type(crash).__name__}; the worker's log has where")
+        finally:
+            self._last_job = time.monotonic()
         return True
 
 
@@ -139,8 +156,11 @@ def run(parent: int | None = None) -> int:
                     if time.monotonic() - pruned > PRUNE_SECONDS or pruned == 0.0:
                         jobs.prune()  # here, as a worker can run for months: the docs promise 30 days
                         pruned = time.monotonic()
-                    if not worker.step():
-                        time.sleep(POLL_SECONDS)
+                    if worker.step():
+                        continue
+                    if worker.idle_too_long():
+                        return RESTART_FOR_MODEL  # a new process is the sure way to hand back its memory
+                    time.sleep(POLL_SECONDS)
             except NewModelNeeded:
                 return RESTART_FOR_MODEL
             except KeyboardInterrupt:
