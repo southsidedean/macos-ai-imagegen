@@ -4,6 +4,9 @@
 
 - AI assistants can make and find images through MCP, at `/mcp` or through `mia mcp`, using the same tokens and limits as
   the API. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/mcp.md) shows how to connect one.
+- `mia service install` keeps mia running: it starts at login and comes back if it dies. `mia service status` and
+  `mia service uninstall` go with it.
+- The Mac stays awake while a job runs, and can sleep again when it's done.
 - Each new picture gets a small JPEG preview, at `GET /v1/images/{id}/preview`.
 - Connections have limits. A request has 15 seconds to arrive, and connections are capped at 64 from one address
   and 256 overall.

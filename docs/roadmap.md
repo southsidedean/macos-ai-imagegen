@@ -5,8 +5,8 @@ changes something here. [PLAN.md](../PLAN.md#roadmap) has the detail of each rel
 behind it.
 
 **Now:** 0.3.0 is released: it makes images through a local REST API and a queue. 0.4.0, MCP and remote
-access, is in progress. The limits remote access needs and the MCP server are done, for assistants on the same Mac.
-launchd services and HTTPS on your LAN are next.
+access, is in progress. The limits remote access needs, the MCP server, and the launchd service are done, all on the
+same Mac for now. HTTPS on your LAN is next.
 
 | Release | What it brings | Status |
 |---|---|---|

@@ -17,7 +17,7 @@ import traceback
 from collections.abc import Callable
 from types import FrameType
 
-from mia import catalog, gpu, history, jobs, paths
+from mia import catalog, gpu, history, jobs, paths, power
 from mia.engine import Cancelled, Engine, MiaError, Request
 from mia.generate import generate, load_engine, new_image_id
 
@@ -53,20 +53,21 @@ class Worker:
         if job is None:
             return True  # cancelled in the moment since it was read
         try:
-            model = catalog.find(job.model)
-            if self._engine is None:
-                self._engine = self._loader(model)
-                self._model = job.model
-            generate(
-                Request(job.prompt, job.seed, job.width, job.height, job.steps),
-                model,
-                self._engine,
-                progress=lambda step, _total: jobs.set_step(job.id, step),
-                cancelled=lambda: jobs.cancel_was_requested(job.id),
-                # In one transaction, so a crash can't leave a recorded image beside a failed job.
-                then=lambda connection, record: jobs.finish_in(connection, job.id, record.id),
-                image_id=image_id,
-            )
+            with power.awake():
+                model = catalog.find(job.model)
+                if self._engine is None:
+                    self._engine = self._loader(model)
+                    self._model = job.model
+                generate(
+                    Request(job.prompt, job.seed, job.width, job.height, job.steps),
+                    model,
+                    self._engine,
+                    progress=lambda step, _total: jobs.set_step(job.id, step),
+                    cancelled=lambda: jobs.cancel_was_requested(job.id),
+                    # In one transaction, so a crash can't leave a recorded image beside a failed job.
+                    then=lambda connection, record: jobs.finish_in(connection, job.id, record.id),
+                    image_id=image_id,
+                )
         except Cancelled:
             if jobs.cancel_was_requested(job.id):
                 jobs.mark_cancelled(job.id)

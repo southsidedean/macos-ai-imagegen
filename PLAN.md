@@ -47,12 +47,12 @@ direct way to use whichever open model you find on Hugging Face.
 | Language and tools | Python, with `uv` and a committed lockfile with hashes: the ML dependency tree is large, and it has to be repeatable. uv also picks a Python version the ML packages support, whatever the system's newest Python is. |
 | Web framework | FastAPI, so the API's OpenAPI document and its validation come from one set of types. kia and ok3d use only the standard library, but mia can't, since its engines need large dependencies anyway. Direct dependencies stay few, and each needs a reason. |
 | MCP library | The official Python SDK, in the same server process as the API, rather than a handwritten server like kia's. The 2026-07-28 revision changed the protocol's core (it's now stateless), and the SDK should carry that kind of change for us. Version 2 of the SDK, with its `MCPServer` API, is the one to use; it answers both `2026-07-28` clients and older ones. |
-| Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. The worker keeps a model loaded between jobs, with MLX's cache capped at 2 GB, which was both the fastest and the steadiest way to run. Cancel takes effect at the next step, and a job still running 60 seconds later is killed along with the worker, which then restarts. In 0.3, `mia serve` starts and watches the worker itself; the two launchd agents replace that in 0.4. `mia generate` and the worker share a lock on the GPU, so only one model is ever loaded. |
+| Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. The worker keeps a model loaded between jobs, with MLX's cache capped at 2 GB, which was both the fastest and the steadiest way to run. Cancel takes effect at the next step, and a job still running 60 seconds later is killed along with the worker, which then restarts. `mia serve` starts and watches the worker itself, and launchd watches `mia serve`. `mia generate` and the worker share a lock on the GPU, so only one model is ever loaded. |
 | Queue and history | One SQLite database, with images as PNG files beside it. History arrives in 0.2 and the queue in 0.3. One job runs at a time, because one model already uses most of the Mac's memory. Queued jobs survive a restart. A job that was running when the worker died is marked failed, with the reason, and isn't retried on its own. |
 | Asynchronous by default | Submitting a request returns a job right away. Generation can take minutes, longer than HTTP and MCP clients usually wait, so a client submits, then polls, streams progress, or asks to wait a limited time. |
 | Reproducible | Each image records its prompt, seed, size, steps, engine and MLX versions, and model revision. Hugging Face models are pinned to a commit, so "make it again" means the same weights. |
 | Sleep | The worker holds a macOS power assertion (as `caffeinate -i` does) only while a job runs, so a remote request isn't cut off by idle sleep and the Mac can still sleep when idle. Waking a sleeping Mac for a request is out of scope. |
-| Service | Two launchd user agents, installed by `mia service install`. A user agent means someone must be logged in; the docs say so, and cover automatic login for a Mac used as a server. |
+| Service | One launchd user agent for `mia serve`, installed by `mia service install` (changed from two on 2026-11-05). The supervisor already restarts the worker, stops a stuck job, and records why a job failed, none of which launchd can do, and a second agent would have split that between two programs. A user agent means someone must be logged in; the docs say so, and cover automatic login for a Mac used as a server. |
 | Where things live | `~/Library/Application Support/mia/` by default (`MIA_HOME` moves it). The models folder has a setting of its own, so models can live on an external drive. Settings are in `settings.toml`, and the repository carries a commented `settings.example.toml`. |
 | AI integration | A ladder, as in kia: `mia doctor` with no AI at all, then your own assistant through MCP, then an AI-assisted install prompt at the top of the README. mia holds no AI provider keys and makes no calls to an LLM; the assistant you connect does its own prompt writing. |
 | Native app | Not before 1.0. The web page works on a phone and a laptop alike, without a separate app to build, sign, and notarize. |
@@ -262,7 +262,8 @@ Workflows, adapted from ok3d and kia:
   - a smoke test in `tests/test_smoke.py` that starts the real server and worker with the fake engine,
     walks a job through the API, and kills the worker mid-job;
   - MCP in that smoke test, over HTTP in both protocol eras and through `mia mcp`;
-  - joining in 0.4, which brings what they check: launchd plist generation and install scripts.
+  - the launchd agent's file, checked with `plutil` on macOS, against a stand-in for `launchctl`. The real agent can't
+    run in CI, so `scripts/real-engine.sh` installs and removes one by hand.
 - `codeql.yml`, `dependency-review.yml`, and `scorecard.yml`, as in ok3d.
 - `release.yml`: on a tag, checks that it's signed and matches the code's version, builds the package,
   attests it, and publishes a release with an SBOM and notes from `CHANGELOG.md`.
@@ -401,8 +402,12 @@ GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as b
   full PNG through its `mia://` link, which it saved to a file of its own. Both runs gave the known pixels. It never
   sent a chunked request, which the Guard refuses.
 
-Still open: other MCP clients, a client on another machine, FLUX.1 dev, and the default cache against the capped one
-on the shipped versions.
+- The service: a real launchd agent, under a test label, gave the known pixels. `pmset` showed `caffeinate` holding the
+  Mac awake during the job, and the process was gone after it. launchd brought back a killed server, which ran a job.
+
+Still open: other MCP clients, a client on another machine, FLUX.1 dev, the default cache against the capped one on the
+shipped versions, and two things the service hasn't been through: a real restart and login, and a Mac actually reaching
+its idle sleep time during a job.
 
 ### What 0.4 had to fix first
 

@@ -117,6 +117,25 @@ def _token(args: argparse.Namespace) -> int:
     return 0
 
 
+def _service(args: argparse.Namespace) -> int:
+    from mia import service
+
+    if args.action == "install":
+        service.install(args.port)
+        print(f"mia is running on port {args.port}, and will start whenever you log in. Its log: {service.log_file()}")
+    elif args.action == "uninstall":
+        print("Stopped and removed mia's service. Your images, history, and tokens are still there." if service.uninstall() else "mia's service wasn't installed.")
+    else:
+        found = service.status()
+        if not found.installed:
+            print("not installed: mia service install sets it up")
+            return 1
+        print(f"installed, port {found.port}, " + (f"running as process {found.pid}" if found.pid else "not running") + (", answering" if found.answering else ", not answering"))
+        print(f"log: {service.log_file()}")
+        return 0 if found.answering else 1
+    return 0
+
+
 def _mcp(url: str) -> int:
     """The token comes only from the environment: a command's arguments can be seen by other users of the Mac."""
     token = os.environ.get("MIA_TOKEN")
@@ -150,6 +169,12 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("history", help="recent images, with their prompts")
     serve = commands.add_parser("serve", help="run the REST API and a worker, on this Mac only")
     serve.add_argument("--port", type=int, default=8765, help="default: %(default)s")
+    keeper = commands.add_parser("service", help="keep mia serve running, starting at login")
+    steps = keeper.add_subparsers(dest="action")
+    setup = steps.add_parser("install", help="start it now and at every login; installing again replaces it")
+    setup.add_argument("--port", type=int, default=8765, help="default: %(default)s")
+    steps.add_parser("uninstall", help="stop it and remove it, keeping your images and tokens")
+    steps.add_parser("status", help="whether it's running; the same as no action")
     assistant = commands.add_parser("mcp", help="connect an AI assistant to mia serve, over stdin and stdout")
     assistant.add_argument("--url", default=os.environ.get("MIA_URL", "http://127.0.0.1:8765"), help="where mia serve is; default: %(default)s")
     worker = commands.add_parser("worker", help="run jobs from the queue; mia serve starts this itself")
@@ -181,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             from mia.server import serve
 
             return serve(args.port)
+        if args.command == "service":
+            return _service(args)
         if args.command == "mcp":
             return _mcp(args.url)
         if args.command == "worker":

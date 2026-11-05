@@ -10,7 +10,7 @@ models, FLUX first, through a web page, a REST API, an MCP server, and a command
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
 before starting work, and update it in the same pull request when a decision changes. 0.3.0 is
-released, with a local REST API, a queue, and a worker; 0.4 brings MCP, which is working, and remote access. `docs/roadmap.md` is the
+released, with a local REST API, a queue, and a worker; 0.4 brings MCP and the launchd service, which work, and remote access. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
@@ -45,7 +45,9 @@ This is the design from `PLAN.md`; these parts arrive release by release.
   a fake engine for tests. Engine-specific code stays in its adapter, because mflux's API moves.
 - Requests are asynchronous: submit, then poll or stream. Generation takes minutes, so don't add a
   blocking path.
-- mia runs natively as launchd user agents. No containers: Docker on macOS has no Metal access.
+- mia runs natively, as one launchd user agent for `mia serve` (`service.py`). No containers: Docker on macOS has no
+  Metal access. Tests use a stand-in for `launchctl`, and `scripts/real-engine.sh` installs a real agent under a test label.
+- The worker holds `power.awake()` while a job runs, and only then. It's `caffeinate -w`, which ends if the worker dies.
 
 ## Commands
 
