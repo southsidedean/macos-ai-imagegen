@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import struct
+import time
 import zlib
 from collections.abc import Callable
 from pathlib import Path
@@ -31,6 +33,12 @@ class FakeEngine:
     def generate(self, request: Request, output: Path, progress: Progress, cancelled: Callable[[], bool]) -> str:
         for step in range(1, request.steps + 1):
             progress(step, request.steps)
+            try:
+                time.sleep(float(os.environ.get("MIA_FAKE_STEP_SECONDS", "0")))  # for tests that act mid-job
+            except KeyboardInterrupt:
+                # What mflux's step loop does, which mia's engine turns into this. The fake has to match, or
+                # the tests pass on a way of stopping that the real engine doesn't have.
+                raise Cancelled(f"interrupted at step {step} of {request.steps}") from None
             if cancelled():
                 raise Cancelled(f"stopped at step {step} of {request.steps}")
         identity = repr((request.prompt, request.seed, request.width, request.height, request.steps)).encode()

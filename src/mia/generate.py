@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,9 +15,14 @@ from mia.catalog import Model, find
 from mia.engine import Engine, MiaError, Progress, Request
 
 
+def engine_is_fake() -> bool:
+    """MIA_ENGINE=fake is for tests, and needs no ML packages or models."""
+    return os.environ.get("MIA_ENGINE") == "fake"
+
+
 def load_engine(model: Model) -> Engine:
-    """The engine for a model, with it loaded. MIA_ENGINE=fake is for tests and needs no ML packages."""
-    if os.environ.get("MIA_ENGINE") == "fake":
+    """The engine for a model, with it loaded."""
+    if engine_is_fake():
         from mia.fake_engine import FakeEngine
 
         return FakeEngine()
@@ -26,6 +32,10 @@ def load_engine(model: Model) -> Engine:
     from mia.mflux_engine import MfluxEngine
 
     return MfluxEngine(model, folder)
+
+
+def new_image_id() -> str:
+    return secrets.token_hex(6)
 
 
 def _never() -> bool:
@@ -43,14 +53,18 @@ def generate(
     output: Path | None = None,
     progress: Progress = _quiet,
     cancelled: Callable[[], bool] = _never,
+    then: Callable[[sqlite3.Connection, history.Record], None] | None = None,
+    image_id: str | None = None,
 ) -> history.Record:
-    image_id = secrets.token_hex(6)
+    image_id = image_id or new_image_id()
     if output is None:
         paths.make_private(paths.home_folder())
         paths.make_private(paths.images_folder())
         output = paths.images_folder() / f"{image_id}.png"
     elif output.suffix.lower() != ".png":
         raise MiaError(f"mia saves PNG files, so {output.name} needs to end in .png")
+    else:
+        output = output.expanduser().resolve()  # recorded, and later read from another folder
     # Written beside the final name and moved at the end, so a stopped job never leaves half a picture.
     partial = output.with_name(f".{image_id}.partial.png")
     try:
@@ -74,7 +88,7 @@ def generate(
         file=str(output),
         pixels=pixels,
     )
-    history.add(paths.history_file(), record)
+    history.add(paths.history_file(), record, then)
     return record
 
 

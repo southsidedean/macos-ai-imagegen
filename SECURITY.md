@@ -12,7 +12,7 @@ open a public issue.
 
 ## Supported versions
 
-mia has no release yet. Until 1.0, only the newest release gets fixes.
+Until 1.0, only the newest release gets fixes.
 
 ## How it's meant to work
 
@@ -24,10 +24,25 @@ Working today, and tested:
 - Images are saved with no metadata, because the image engine would otherwise write your prompt and home
   folder into every one. Prompts are kept in mia's own history file, and stay out of its output.
 - mia's folder and history file are readable only by you.
+- The API listens only on this Mac, and refuses a request whose `Host` or `Origin` names anywhere else,
+  which stops a web page from reaching it through DNS rebinding.
+- Every route but a bare health check and the API's public description needs a token, and only in the
+  `Authorization` header. A test walks the app's routes to prove it. Each device
+  has its own, with its own permissions, stored only as a hash and shown once. You can revoke one without
+  touching the others.
+- Requests and event streams are limited per device, as are the queue's length and a request's size.
+- An answer that refuses a request doesn't repeat what was sent, and prompts stay out of the server's output.
+- Deleting an image also deletes the job that made it. Finished jobs, which hold prompts, are forgotten after 30
+  days.
+- The API can read or delete image files only in mia's own images folder.
+- The API process doesn't load the image engine, so a crash there can't take it down.
 
-Still to come, because there's no server yet. Each gets built and tested in the release that needs it,
-following the design in [PLAN.md](PLAN.md#security):
+Known limits, on this Mac for now because nothing else can reach the API:
 
-- It listens only on your Mac until you turn on remote access, and then only over HTTPS.
-- Each device gets its own token, with its own permissions, and you can revoke one without touching
-  the others.
+- All tokens share one queue and history, and tokens don't expire. mia is built for one person's or household's
+  devices.
+- A process on your Mac can hold many idle connections open with no token, and could use up the server's
+  connections. This needs fixing before remote access arrives.
+
+Still to come, following the design in [PLAN.md](PLAN.md#security): remote access over HTTPS, in 0.4.
+Until then, there's no way to turn on access from another machine.

@@ -12,6 +12,8 @@ description = "A macOS stack for generating AI images with open models, through 
 license = "AGPL-3.0-only"
 # The engine doesn't install on Python 3.15 yet: mflux needs sentencepiece, which has no wheels for it.
 requires-python = ">=3.12,<3.15"
+# Only what the server needs. It never imports the engine's packages.
+dependencies = ["fastapi==0.162.0", "uvicorn==0.54.0"]
 
 [project.scripts]
 mia = "mia.cli:main"
@@ -35,6 +37,8 @@ dev = [
     "mypy==2.4.0",
     "zizmor==1.31.1",
     "pip-audit==2.10.1",
+    # FastAPI's test client needs it.
+    "httpx2==2.16.0",
 ]
 
 [tool.uv]
@@ -71,6 +75,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, use temporary paths, and write example secrets on purpose.
 "tests/**" = ["S101", "S105", "S106", "S108"]
+# Queries put together only from our own column lists, with every value bound as a parameter.
+"src/mia/{history,jobs,tokens}.py" = ["S608"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]

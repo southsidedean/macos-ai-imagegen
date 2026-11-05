@@ -4,8 +4,9 @@
 #   scripts/real-engine.sh
 #
 # It uses the real models folder (or MIA_MODELS), and downloads the default model if it's missing, about
-# 4.6 GB. Images and history go in a throwaway folder, so your own history is left alone. It takes
-# about three minutes. Every line it prints is safe to paste into a pull request: it shows no paths.
+# 4.6 GB. Images, history, and the test's own server go in a throwaway folder and on a spare port, so your
+# own history and any mia serve you have running are left alone, though it can't share the GPU with one.
+# It takes about five minutes. Every line it prints is safe to paste into a pull request: it shows no paths.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -26,7 +27,15 @@ uv sync --locked --extra dev --extra engine -q
 mia=.venv/bin/mia
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+server=""
+cleanup() {
+	if [ -n "$server" ]; then
+		kill -TERM "$server" 2>/dev/null || true
+		wait "$server" 2>/dev/null || true
+	fi
+	rm -rf "$work"
+}
+trap cleanup EXIT
 export MIA_MODELS="${MIA_MODELS:-$HOME/Library/Application Support/mia/models}"
 export MIA_HOME="$work/mia"
 
@@ -75,6 +84,128 @@ if [ "$status" -eq 130 ] && [ ! -e "$work/stopped.png" ] && [ "$before" = "$afte
 else
 	fail "5. stopping: exit $status, recorded $before then $after"
 fi
+
+# The API, with a real model in a real worker: what 0.3 promises.
+port=18765
+token=$("$mia" token create --for real-engine 2>/dev/null)
+"$mia" serve --port "$port" 2>"$work/serve.log" &
+server=$!
+base="http://127.0.0.1:$port"
+call() { # METHOD PATH [BODY]: prints the answer's body.
+	if [ $# -eq 3 ]; then
+		curl -fsS -X "$1" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$3" "$base$2"
+	else
+		curl -fsS -X "$1" -H "Authorization: Bearer $token" "$base$2"
+	fi
+}
+field() { # NAME: reads one field of the JSON on standard input.
+	.venv/bin/python -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1]))' "$1"
+}
+state_of() { call GET "/v1/jobs/$1" | field state; }
+wait_until_finished() { # JOB: prints its final state, or "timeout" after five minutes.
+	tries=0
+	while [ "$tries" -lt 600 ]; do
+		now=$(state_of "$1" || echo unknown)
+		case "$now" in done | failed | cancelled)
+			echo "$now"
+			return
+			;;
+		esac
+		tries=$((tries + 1))
+		sleep 0.5
+	done
+	echo timeout
+}
+tries=0
+until curl -fsS "$base/v1/health" >/dev/null 2>&1; do
+	tries=$((tries + 1))
+	if [ "$tries" -gt 60 ]; then
+		fail "6. the server didn't start"
+		echo "$failures check(s) failed."
+		exit 1
+	fi
+	sleep 0.5
+done
+
+body=$(.venv/bin/python -c 'import json, sys; print(json.dumps({"prompt": sys.argv[1], "seed": 42}))' "$prompt")
+job=$(call POST /v1/jobs "$body" | field id)
+result=$(wait_until_finished "$job")
+image=$(call GET "/v1/jobs/$job" | field image)
+pixels=$(call GET "/v1/images/$image" | field pixels)
+call GET "/v1/images/$image/file" >"$work/from-api.png"
+case "$result $pixels" in
+"done $expected"*) pass "6. a job through the API, in a worker, gave the known pixels" ;;
+*) fail "6. a job through the API: $result, pixels $(printf '%s' "$pixels" | cut -c1-12)" ;;
+esac
+if [ -s "$work/from-api.png" ]; then pass "7. the image downloaded through the API"; else fail "7. no image from the API"; fi
+
+# Kill the worker while it holds a loaded model and is partway through a job.
+long=$(call POST /v1/jobs "$body" | field id)
+sleep 12
+victim=$(cat "$MIA_HOME/gpu.lock")
+kill -KILL "$victim"
+result=$(wait_until_finished "$long")
+reason=$(call GET "/v1/jobs/$long" | field error)
+if [ "$result" = failed ] && [ "$reason" = "the worker stopped while this job was running" ] && curl -fsS "$base/v1/health" >/dev/null; then
+	pass "8. killing the worker mid-job left the API up, and recorded why the job failed"
+else
+	fail "8. after killing the worker: $result"
+fi
+next=$(call POST /v1/jobs '{"prompt": "a small test", "seed": 1, "width": 512, "height": 512, "steps": 2}' | field id)
+result=$(wait_until_finished "$next")
+replacement=$(cat "$MIA_HOME/gpu.lock")
+if [ "$result" = "done" ] && [ "$replacement" != "$victim" ]; then
+	pass "9. a new worker took the next job"
+else
+	fail "9. the next job: $result"
+fi
+
+# Cancel partway, through the API.
+stopping=$(call POST /v1/jobs "$body" | field id)
+sleep 8
+requested=$(date +%s)
+call DELETE "/v1/jobs/$stopping" >/dev/null
+result=$(wait_until_finished "$stopping")
+took=$(($(date +%s) - requested))
+kept=$(call GET "/v1/jobs/$stopping" | field image)
+leftovers=$(find "$MIA_HOME/images" -name '.*partial*' | wc -l | tr -d ' ')
+if [ "$result" = cancelled ] && [ "$kept" = None ] && [ "$leftovers" = 0 ]; then
+	pass "10. cancelled ${took} seconds after asking, and kept nothing"
+else
+	fail "10. cancelling: $result, image $kept, $leftovers partial files"
+fi
+
+# Stopping mid-job, with another waiting. mflux's step loop catches the interrupt itself, and treats it as the
+# end of the job, so this is the one place only the real engine can prove the worker still stops.
+running=$(call POST /v1/jobs "$body" | field id)
+waiting=$(call POST /v1/jobs '{"prompt": "a small test", "seed": 1, "width": 512, "height": 512, "steps": 2}' | field id)
+sleep 12
+worker=$(cat "$MIA_HOME/gpu.lock")
+requested=$(date +%s)
+kill -TERM "$server"
+wait "$server" 2>/dev/null || true
+server=""
+took=$(($(date +%s) - requested))
+states=$(.venv/bin/python -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); print(*[c.execute("SELECT state FROM jobs WHERE id = ?", (i,)).fetchone()[0] for i in sys.argv[2:]])' "$MIA_HOME/history.sqlite3" "$running" "$waiting")
+if ! kill -0 "$worker" 2>/dev/null && [ "$states" = "failed queued" ]; then
+	pass "11. stopped mid-job in ${took} seconds: that job failed, and the next stayed queued"
+else
+	fail "11. stopping mid-job: after ${took} seconds, states $states"
+fi
+
+# And the queue survives: a new server's worker runs what was waiting.
+"$mia" serve --port "$port" 2>>"$work/serve.log" &
+server=$!
+tries=0
+until curl -fsS "$base/v1/health" >/dev/null 2>&1 || [ "$tries" -gt 60 ]; do
+	tries=$((tries + 1))
+	sleep 0.5
+done
+result=$(wait_until_finished "$waiting")
+if [ "$result" = "done" ]; then pass "12. a new server ran the job left in the queue"; else fail "12. the waiting job: $result"; fi
+kill -TERM "$server"
+wait "$server" 2>/dev/null || true
+server=""
 
 if [ "$failures" -gt 0 ]; then
 	echo "$failures check(s) failed."
