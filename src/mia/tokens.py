@@ -21,6 +21,8 @@ READ, GENERATE, ADMIN = "read", "generate", "admin"
 SCOPES = (READ, GENERATE, ADMIN)  # each includes the ones before it
 PREFIX = "mia_"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+ISSUED = re.compile(PREFIX + r"[A-Za-z0-9_-]{43}")  # what create() makes: anything else needs no database to refuse
+MAX_DAYS = 3650
 LAST_USED_EVERY = 60  # seconds: no need to write to the database on every request
 
 
@@ -32,30 +34,35 @@ class Device:
     created: str
     last_used: float | None
     revoked: str | None
+    expires: float | None = None
 
     def allows(self, needed: str) -> bool:
         return SCOPES.index(self.scope) >= SCOPES.index(needed)
 
 
-COLUMNS = "id, name, scope, created, last_used, revoked"
+COLUMNS = "id, name, scope, created, last_used, revoked, expires"
+ACTIVE = "revoked IS NULL AND (expires IS NULL OR expires > ?)"
 
 
 def _digest(presented: str) -> str:
     return hashlib.sha256(presented.encode()).hexdigest()
 
 
-def create(name: str, scope: str = GENERATE) -> str:
-    """Makes a token and returns it. This is the only time anyone sees it."""
+def create(name: str, scope: str = GENERATE, days: int | None = None) -> str:
+    """Makes a token and returns it. This is the only time anyone sees it. With `days`, it stops working after that."""
     if not NAME.fullmatch(name):
         raise MiaError("a device's name uses letters, digits, dots, dashes, and underscores, up to 64 characters")
     if scope not in SCOPES:
         raise MiaError(f"the scope must be one of: {', '.join(SCOPES)}")
+    if days is not None and not 1 <= days <= MAX_DAYS:
+        raise MiaError(f"a token lasts from 1 to {MAX_DAYS} days")
+    expires = None if days is None else time.time() + days * 86400
     issued = PREFIX + secrets.token_urlsafe(32)
     try:
         with db.session() as connection:
             connection.execute(
-                "INSERT INTO tokens (id, name, scope, digest, created) VALUES (?, ?, ?, ?, ?)",
-                (secrets.token_hex(6), name, scope, _digest(issued), datetime.now(UTC).isoformat(timespec="seconds")),
+                "INSERT INTO tokens (id, name, scope, digest, created, expires) VALUES (?, ?, ?, ?, ?, ?)",
+                (secrets.token_hex(6), name, scope, _digest(issued), datetime.now(UTC).isoformat(timespec="seconds"), expires),
             )
     except sqlite3.IntegrityError as taken:
         raise MiaError(f"there's already a token for {name}: revoke it first, or choose another name") from taken
@@ -64,14 +71,14 @@ def create(name: str, scope: str = GENERATE) -> str:
 
 def verify(presented: str) -> Device | None:
     """The device a token belongs to, or None. Looking up its hash means nothing compares the token itself."""
-    if not presented.startswith(PREFIX) or len(presented) > 200:
+    if not ISSUED.fullmatch(presented):
         return None
     digest = _digest(presented)
     now = time.time()
     with db.session() as connection:
         row = connection.execute(
-            f"SELECT {COLUMNS} FROM tokens WHERE digest = ? AND revoked IS NULL",  # nosec B608  # our own columns
-            (digest,),
+            f"SELECT {COLUMNS} FROM tokens WHERE digest = ? AND {ACTIVE}",  # nosec B608  # our own text
+            (digest, now),
         ).fetchone()
         if row and (row[4] is None or now - row[4] > LAST_USED_EVERY):
             connection.execute("UPDATE tokens SET last_used = ? WHERE digest = ?", (now, digest))
@@ -81,7 +88,7 @@ def verify(presented: str) -> Device | None:
 def still_active(device_id: str) -> bool:
     """For anything long-lived that started with a valid token: a revoked one has to stop working there too."""
     with db.session() as connection:
-        row = connection.execute("SELECT 1 FROM tokens WHERE id = ? AND revoked IS NULL", (device_id,)).fetchone()
+        row = connection.execute(f"SELECT 1 FROM tokens WHERE id = ? AND {ACTIVE}", (device_id, time.time())).fetchone()  # nosec B608
     return row is not None
 
 

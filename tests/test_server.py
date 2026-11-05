@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from fastapi.testclient import TestClient
 from mia import catalog, history, jobs, paths, server, tokens
 from mia.fake_engine import FakeEngine
 from mia.generate import generate
-from mia.engine import Request
+from mia.engine import MiaError, Request
 from mia.worker import Worker
 
 BASE = "http://127.0.0.1:8765"
@@ -78,7 +79,7 @@ def _needs_a_token(dependant: Any) -> bool:
 
 def test_every_route_in_the_app_needs_a_token_unless_named_here() -> None:
     # Walks the app itself, so a new route can't ship without a token by being left off a list.
-    public = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json")}
+    public = server.PUBLIC
     checked = 0
     for route in server.create_app().routes:
         # A mount or a websocket route has no methods, and MCP is likely to be one: name it here, or fail.
@@ -91,6 +92,140 @@ def test_every_route_in_the_app_needs_a_token_unless_named_here() -> None:
             assert _needs_a_token(route.dependant), f"{method} {path} doesn't check a token"
             checked += 1
     assert checked >= 11  # the walk really did find the routes
+
+
+def test_a_path_with_no_route_needs_a_token_too(api: TestClient) -> None:
+    # The Guard is what refuses, so a mount or route added later starts out closed.
+    assert api.get("/v1/nothing-here").status_code == 401
+    assert api.get("/v1/nothing-here", headers=bearer()).status_code == 404
+    assert api.get("/v1/health/").status_code == 401  # only the exact public paths are public
+
+
+def test_the_token_is_checked_before_any_of_the_body_is_read() -> None:
+    import asyncio
+
+    async def app(_scope: Any, _receive: Any, _send: Any) -> None:
+        raise AssertionError("the request got past the Guard")
+
+    async def receive() -> dict[str, Any]:
+        raise AssertionError("the Guard read the body")
+
+    sent: list[Any] = []
+
+    async def send(message: Any) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http", "method": "POST", "path": "/v1/jobs", "query_string": b"", "client": ("192.0.2.1", 1),
+        "headers": [(b"host", b"127.0.0.1"), (b"content-length", b"100")],
+    }  # fmt: skip
+    asyncio.run(server.Guard(app, server.Limiter())(scope, receive, send))
+    assert sent[0]["status"] == 401
+
+
+def test_refusals_carry_the_same_headers_as_answers(api: TestClient) -> None:
+    for refused in (api.get("/v1/jobs"), api.get("/v1/health", headers={"Host": "evil.example"})):
+        assert refused.headers["x-content-type-options"] == "nosniff"
+        assert refused.headers["cache-control"] == "no-store"
+
+
+def test_the_openapi_document_says_a_token_is_needed(api: TestClient) -> None:
+    document = api.get("/openapi.json").json()
+    assert document["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+    assert document["paths"]["/v1/jobs"]["get"]["security"] == [{"HTTPBearer": []}]
+
+
+def test_refused_requests_are_limited_per_address(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "REFUSED_SIGN_INS_PER_MINUTE", 3)
+    good = bearer(tokens.READ)
+    for _ in range(3):
+        assert api.get("/v1/jobs", headers={"Authorization": f"Bearer mia_{'x' * 43}"}).status_code == 401
+    limited = api.get("/v1/jobs")
+    assert limited.status_code == 429 and limited.headers["retry-after"] == "60"
+    assert api.get("/v1/jobs", headers=good).status_code == 429  # the same address waits with the rest
+    assert api.get("/v1/health").status_code == 200
+
+    with TestClient(server.create_app(), base_url=BASE, client=("192.0.2.1", 1)) as elsewhere:
+        assert elsewhere.get("/v1/jobs", headers=good).status_code == 200  # another address isn't affected
+
+
+def test_good_requests_dont_count_as_refused(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "REFUSED_SIGN_INS_PER_MINUTE", 2)
+    good = bearer(tokens.READ)
+    for _ in range(5):
+        assert api.get("/v1/jobs", headers=good).status_code == 200
+
+
+def test_being_past_the_limit_costs_no_database(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia import db
+
+    monkeypatch.setattr(server, "REFUSED_SIGN_INS_PER_MINUTE", 1)
+    wrong = {"Authorization": f"Bearer mia_{'x' * 43}"}
+    opened: list[object] = []
+    real = db.connect
+
+    def counted(path: Path | None = None) -> Any:
+        opened.append(path)
+        return real(path)
+
+    monkeypatch.setattr(db, "connect", counted)
+    assert api.get("/v1/jobs", headers=wrong).status_code == 401
+    assert opened  # a token of the right shape does look
+    opened.clear()
+    assert api.get("/v1/jobs", headers=wrong).status_code == 429
+    assert not opened
+
+
+@pytest.mark.parametrize("value", ["mia_short", "other_" + "x" * 41, "mia_" + "!" * 43, "mia_" + "x" * 44])
+def test_a_token_of_the_wrong_shape_costs_no_database(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    from mia import db
+
+    def fail(_path: object = None) -> None:
+        raise AssertionError("opened the database")
+
+    monkeypatch.setattr(db, "connect", fail)
+    assert tokens.verify(value) is None
+
+
+def test_two_authorization_headers_are_refused(api: TestClient) -> None:
+    good = bearer(tokens.READ)["Authorization"]
+    two = [("Authorization", good), ("Authorization", good)]
+    assert api.get("/v1/jobs", headers=two).status_code == 401
+
+
+def test_the_limiter_doesnt_grow_forever(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "MAX_TRACKED", 10)
+    limiter = server.Limiter()
+    for number in range(100):
+        limiter.allow(f"192.0.2.{number}", "refused", 5)
+    assert len(limiter._seen) <= 10
+
+
+def test_a_token_with_days_stops_working_when_they_run_out(api: TestClient) -> None:
+    from mia import db
+
+    issued = tokens.create("visitor", tokens.READ, days=7)
+    headers = {"Authorization": f"Bearer {issued}"}
+    device = next(d for d in tokens.devices() if d.name == "visitor")
+    assert device.expires is not None and 6.9 * 86400 < device.expires - time.time() <= 7 * 86400
+    assert api.get("/v1/jobs", headers=headers).status_code == 200
+    assert tokens.still_active(device.id)
+    with db.session() as connection:
+        connection.execute("UPDATE tokens SET expires = ? WHERE name = 'visitor'", (time.time() - 1,))
+    assert api.get("/v1/jobs", headers=headers).status_code == 401
+    assert not tokens.still_active(device.id)  # an open event stream stops too
+
+
+def test_a_token_lasts_until_revoked_unless_told_otherwise(api: TestClient) -> None:
+    tokens.create("keeper")
+    assert next(d for d in tokens.devices() if d.name == "keeper").expires is None
+
+
+@pytest.mark.parametrize("days", [0, -1, tokens.MAX_DAYS + 1])
+def test_a_tokens_days_have_a_range(days: int) -> None:
+    with pytest.raises(MiaError, match="days"):
+        tokens.create("visitor", days=days)
+    assert not tokens.devices()
 
 
 @pytest.mark.parametrize("header", ["Bearer mia_wrong", "Basic abc", "mia_abc", "Bearer ", ""])
@@ -419,8 +554,8 @@ def test_odd_image_ids_are_simply_not_found(api: TestClient, bad: str) -> None:
 
 def test_the_interactive_docs_arent_served(api: TestClient) -> None:
     # They load scripts from a CDN. The OpenAPI document is enough, and holds nothing private.
-    assert api.get("/docs").status_code == 404
-    assert api.get("/redoc").status_code == 404
+    assert api.get("/docs", headers=bearer()).status_code == 404
+    assert api.get("/redoc", headers=bearer(name="other")).status_code == 404
     assert api.get("/openapi.json").status_code == 200
 
 
@@ -433,3 +568,16 @@ def test_the_server_doesnt_load_the_engine() -> None:
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_token_command_can_set_days_and_shows_them(capsys: pytest.CaptureFixture[str]) -> None:
+    from mia.cli import main
+
+    assert main(["token", "create", "--for", "visitor", "--days", "7"]) == 0
+    assert "lasting 7 days" in capsys.readouterr().err
+    assert main(["token", "create", "--for", "keeper"]) == 0
+    capsys.readouterr()
+    assert main(["token", "list"]) == 0
+    listed = capsys.readouterr().out.splitlines()
+    assert "expires " in listed[0] and "expire" not in listed[1]
+    assert main(["token", "create", "--for", "bad", "--days", "0"]) == 1

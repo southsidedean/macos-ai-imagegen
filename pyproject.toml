@@ -13,7 +13,7 @@ license = "AGPL-3.0-only"
 # The engine doesn't install on Python 3.15 yet: mflux needs sentencepiece, which has no wheels for it.
 requires-python = ">=3.12,<3.15"
 # Only what the server needs. It never imports the engine's packages.
-dependencies = ["fastapi==0.162.0", "uvicorn==0.54.0"]
+dependencies = ["fastapi==0.162.0", "h11==0.16.0", "uvicorn==0.54.0"]
 
 [project.scripts]
 mia = "mia.cli:main"

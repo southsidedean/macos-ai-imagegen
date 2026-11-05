@@ -10,8 +10,7 @@ models, FLUX first, through a web page, a REST API, an MCP server, and a command
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
 before starting work, and update it in the same pull request when a decision changes. 0.3.0 is
-released, with a local REST API, a queue, and a worker; 0.4 brings MCP and remote access, and `PLAN.md`
-lists what it has to fix first. `docs/roadmap.md` is the
+released, with a local REST API, a queue, and a worker; 0.4 brings MCP and remote access. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
@@ -33,8 +32,9 @@ This is the design from `PLAN.md`; these parts arrive release by release.
 - They share one SQLite database (`db.py`, migrations only ever added to the end), with images as files beside
   it, under `MIA_HOME` (by default `~/Library/Application Support/mia/`). Anything a worker knows is there, so
   it can be killed at any moment. `gpu.py` is a flock that lets only one process hold a model.
-- `tests/test_smoke.py` runs the real server and worker as processes. `tests/test_server.py` walks the app's
-  routes to prove each needs a token, so a public route has to be named there.
+- `tests/test_smoke.py` runs the real server and worker as processes. The Guard in `server.py` checks the token for
+  everything but `PUBLIC`, before a body is read, and `tests/test_server.py` walks the app's routes to prove each
+  also asks for one. `tests/test_connections.py` tests the connection limits over real sockets.
 - Only end a job marked running while holding the GPU (`gpu.hold`), which proves no worker has it. The fake engine
   swallows interrupts as mflux's step loop does: keep it matching, or the tests pass on behaviour mflux doesn't have.
 - FastAPI reads annotations at runtime, so `server.py` can't use `from __future__ import annotations`.

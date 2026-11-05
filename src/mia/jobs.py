@@ -208,6 +208,13 @@ def cancel(job_id: str) -> Job | None:
     return get(job_id)
 
 
+def running_progress() -> tuple[str, int] | None:
+    """The running job and its step: when this stops changing, the job isn't getting anywhere."""
+    with db.session() as connection:
+        row = connection.execute("SELECT id, step FROM jobs WHERE state = ? LIMIT 1", (RUNNING,)).fetchone()
+    return (row[0], row[1]) if row else None
+
+
 def stuck_in_cancel(grace_seconds: float) -> bool:
     """Whether a running job has ignored a cancel for this long, as one in its final decode can."""
     with db.session() as connection:

@@ -21,6 +21,10 @@ HEALTHY_AFTER = 60.0  # a worker that lasted this long gets a fresh start on its
 # A cancel takes effect between steps, so one in the final decode has to wait for it to finish. After
 # this long, the only way left to stop the job is to stop the worker.
 CANCEL_GRACE = 60.0
+# Long enough for the slowest step or decode on a slow Mac, so this only stops an engine that has hung. It's measured
+# on the monotonic clock, which stops while a Mac sleeps, so closing the lid doesn't count against a job.
+STALL_SECONDS = 1800.0
+STALLED = "the job made no progress for 30 minutes, so mia restarted the worker"
 STOP_WAIT = 30.0
 
 
@@ -54,6 +58,9 @@ class Supervisor:
         self._started_at = 0.0
         self._not_before = 0.0
         self._backoff = FIRST_BACKOFF
+        self._progress: tuple[str, int] | None = None
+        self._progress_since = 0.0
+        self._ended_because: str | None = None
 
     def start(self) -> None:
         self._thread.start()
@@ -85,16 +92,27 @@ class Supervisor:
         if code is None:
             if jobs.stuck_in_cancel(CANCEL_GRACE):
                 self._process.kill()
+            elif self._stalled():
+                self._ended_because = STALLED
+                self._process.kill()
             return
         # Recover before forgetting the process: if this fails, the next check comes back here and tries again.
-        recover_if_free()
+        recover_if_free(self._ended_because)
         self._process = None
+        self._progress = self._ended_because = None
         if time.monotonic() - self._started_at > HEALTHY_AFTER:
             self._backoff = FIRST_BACKOFF
         if code != 0:  # zero is the worker asking for a new process, for another model
             _log(f"the worker stopped unexpectedly, with code {code}; restarting it")
             self._not_before = time.monotonic() + self._backoff
             self._backoff = min(self._backoff * 2, MAX_BACKOFF)
+
+    def _stalled(self) -> bool:
+        progress = jobs.running_progress()
+        if progress != self._progress:
+            self._progress, self._progress_since = progress, time.monotonic()
+            return False
+        return progress is not None and time.monotonic() - self._progress_since > STALL_SECONDS
 
     def stop(self) -> None:
         self._stopping.set()

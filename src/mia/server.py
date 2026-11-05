@@ -1,8 +1,7 @@
 """The REST API. It never imports an ML package: it reads and writes the database, and the worker does the rest.
 
-Every route but /v1/health and the OpenAPI document needs a token. It listens only on this Mac for now:
-remote access arrives in 0.4, with HTTPS. Before then, idle connections need a time limit: a local process can
-still hold many open with no token, though the raised open-file limit makes that harder.
+Everything but PUBLIC needs a token, and the Guard checks it before anything else runs, so a route added later
+can't be left open by accident. It listens only on this Mac for now: remote access arrives in 0.4, with HTTPS.
 """
 
 import asyncio
@@ -20,10 +19,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+import h11
+import uvicorn
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request as HttpRequest, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
+from uvicorn.protocols.http.h11_impl import H11Protocol
 
 from mia import __version__, catalog, history, jobs, models, paths, tokens
 from mia.engine import MAX_PROMPT, MiaError, Request, random_seed
@@ -43,6 +46,12 @@ SHUTDOWN_SECONDS = 5  # how long an open event stream can hold up stopping the s
 MIN_FREE_BYTES = 2 * 1024**3  # below this, an image could fail halfway, or squeeze out everything else on the Mac
 REQUESTS_PER_MINUTE = 240
 SUBMITS_PER_MINUTE = 30
+REFUSED_SIGN_INS_PER_MINUTE = 30
+MAX_TRACKED = 10_000  # how many devices and addresses the limiter remembers: many addresses mustn't use up memory
+MAX_CONNECTIONS, MAX_CONNECTIONS_PER_ADDRESS = 256, 64
+ARRIVAL_SECONDS = 15.0  # how long a request has to arrive, from its first byte or from connecting
+PUBLIC = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json")}
+DEVICE = "mia.device"  # where the Guard leaves the device it signed in, in the request's scope
 EVENT_POLL_SECONDS = 0.5
 EVENT_KEEPALIVE_SECONDS = 15.0
 EVENT_MAX_SECONDS = 3600.0
@@ -55,22 +64,56 @@ Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 
 
+class Connection(H11Protocol):
+    """Limits what someone with no token can hold open. uvicorn only times a connection between requests, so one
+    that never finishes sending a request would otherwise stay for as long as the sender likes."""
+
+    _deadline: asyncio.TimerHandle | None = None
+
+    def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
+        super().connection_made(transport)
+        address = self.client[0] if self.client else None
+        from_here = [other for other in self.connections if isinstance(other, H11Protocol) and other.client and other.client[0] == address]
+        if len(self.connections) > MAX_CONNECTIONS or len(from_here) > MAX_CONNECTIONS_PER_ADDRESS:
+            transport.abort()
+            return
+        self._watch_arrival()
+
+    def data_received(self, data: bytes) -> None:
+        super().data_received(data)
+        self._watch_arrival()
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        self._stop_watching()
+        super().connection_lost(exc)
+
+    def _watch_arrival(self) -> None:
+        """One deadline for the whole request, which more data doesn't move: a byte at a time mustn't get around it."""
+        if self.conn.their_state not in (h11.IDLE, h11.SEND_BODY):
+            self._stop_watching()
+        elif self._deadline is None:
+            self._deadline = self.loop.call_later(ARRIVAL_SECONDS, self.transport.abort)
+
+    def _stop_watching(self) -> None:
+        if self._deadline is not None:
+            self._deadline.cancel()
+            self._deadline = None
+
+
 class Guard:
     """Runs before everything else. Host and Origin checks are what stop DNS rebinding: a web page that points
-    its own name at this Mac still can't get in, and MCP's spec requires the same check."""
+    its own name at this Mac still can't get in, and MCP's spec requires the same check. The token check is here
+    because FastAPI reads a body before a route's own checks, which would be work done for strangers."""
 
-    def __init__(self, app: Callable[[Scope, Receive, Send], Awaitable[None]]) -> None:
+    def __init__(self, app: Callable[[Scope, Receive, Send], Awaitable[None]], limiter: "Limiter") -> None:
         self.app = app
+        self.limiter = limiter
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         pairs = [(key.decode("latin1").lower(), value.decode("latin1")) for key, value in scope["headers"]]
-        refusal = self._refuse(scope["method"], pairs)
-        if refusal is not None:
-            await refusal(scope, receive, send)
-            return
 
         async def with_headers(message: MutableMapping[str, Any]) -> None:
             if message["type"] == "http.response.start":
@@ -81,7 +124,30 @@ class Guard:
                 message["headers"] = sent
             await send(message)
 
+        refusal = self._refuse(scope["method"], pairs)
+        if refusal is None and (scope["method"], scope["path"]) not in PUBLIC:
+            refusal = await self._sign_in(scope, pairs)
+        if refusal is not None:
+            await refusal(scope, receive, with_headers)
+            return
         await self.app(scope, receive, with_headers)
+
+    async def _sign_in(self, scope: Scope, pairs: list[tuple[str, str]]) -> JSONResponse | None:
+        """A token can't be guessed, so the limit on refusals is there to stop strangers making mia do work. It comes
+        first, so an address past it costs no database. A device on that address waits with the rest, for a minute."""
+        address = scope["client"][0] if scope.get("client") else "unknown"
+        if self.limiter.full(address, "refused", REFUSED_SIGN_INS_PER_MINUTE):
+            return JSONResponse({"detail": "too many refused requests"}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
+        given = [value for key, value in pairs if key == "authorization"]
+        scheme, _, presented = (given[0] if len(given) == 1 else "").partition(" ")
+        found = await asyncio.to_thread(tokens.verify, presented.strip()) if scheme.lower() == "bearer" else None
+        if found is None:
+            self.limiter.allow(address, "refused", REFUSED_SIGN_INS_PER_MINUTE)
+            return JSONResponse({"detail": "a valid token is needed"}, status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"})
+        if not self.limiter.allow(found.id, "all", REQUESTS_PER_MINUTE):
+            return JSONResponse({"detail": "too many requests"}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
+        scope[DEVICE] = found
+        return None
 
     @staticmethod
     def _refuse(method: str, pairs: list[tuple[str, str]]) -> JSONResponse | None:
@@ -112,9 +178,20 @@ class Limiter:
         self._lock = threading.Lock()
         self._seen: defaultdict[tuple[str, str], deque[float]] = defaultdict(deque)
 
+    def full(self, device: str, kind: str, limit: int) -> bool:
+        """Whether `allow` would refuse, without counting this as a request."""
+        now = time.monotonic()
+        with self._lock:
+            times = self._seen.get((device, kind), ())
+            return sum(1 for seen in times if now - seen <= 60) >= limit
+
     def allow(self, device: str, kind: str, limit: int) -> bool:
         now = time.monotonic()
         with self._lock:
+            if len(self._seen) >= MAX_TRACKED:
+                # Forgetting is safe: it only gives someone back a limit they could have waited a minute for.
+                current = {key: seen for key, seen in self._seen.items() if seen and now - seen[-1] <= 60}
+                self._seen = defaultdict(deque, current if len(current) < MAX_TRACKED else {})
             times = self._seen[(device, kind)]
             while times and now - times[0] > 60:
                 times.popleft()
@@ -246,7 +323,7 @@ def create_app(run_worker: bool = False) -> FastAPI:
 
     # No /docs pages: they load scripts from a CDN, and this server shouldn't reach out or host them.
     app = FastAPI(title="mia", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None)
-    app.add_middleware(Guard)
+    app.add_middleware(Guard, limiter=limiter)
 
     @app.exception_handler(RequestValidationError)
     async def _invalid(_request: Any, problem: RequestValidationError) -> JSONResponse:
@@ -267,13 +344,14 @@ def create_app(run_worker: bool = False) -> FastAPI:
     async def _full(_request: Any, problem: jobs.QueueFull) -> JSONResponse:
         return JSONResponse({"detail": str(problem)}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
 
-    def device(authorization: Annotated[str | None, Header()] = None) -> tokens.Device:
-        scheme, _, presented = (authorization or "").partition(" ")
-        found = tokens.verify(presented.strip()) if scheme.lower() == "bearer" else None
+    def device(
+        request: HttpRequest,
+        _described: Annotated[HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))] = None,
+    ) -> tokens.Device:
+        """The device the Guard signed in. `_described` only puts the token in the OpenAPI document."""
+        found: tokens.Device | None = request.scope.get(DEVICE)
         if found is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "a valid token is needed", {"WWW-Authenticate": "Bearer"})
-        if not limiter.allow(found.id, "all", REQUESTS_PER_MINUTE):
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many requests", {"Retry-After": "60"})
         return found
 
     def needs(scope: str) -> Callable[[tokens.Device], tokens.Device]:
@@ -420,9 +498,20 @@ def _raise_open_file_limit() -> None:
         resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
 
 
-def serve(port: int = PORT) -> int:
-    import uvicorn
+def _config(app: FastAPI) -> uvicorn.Config:
+    return uvicorn.Config(
+        app,
+        access_log=False,  # a search's query string holds text from prompts, and prompts stay out of logs
+        log_level="warning",
+        server_header=False,
+        http=Connection,  # h11, the parser the Guard's checks were tested against: another could read a request differently
+        proxy_headers=False,  # nothing sits in front of this, so a client's forwarded headers mean nothing
+        ws="none",
+        timeout_graceful_shutdown=SHUTDOWN_SECONDS,
+    )
 
+
+def serve(port: int = PORT) -> int:
     _raise_open_file_limit()
     # Bound before anything starts: uvicorn runs the app's startup first, so a second mia serve on a taken port
     # would otherwise start a supervisor, fail, and shut it down beside the first server's worker.
@@ -433,15 +522,5 @@ def serve(port: int = PORT) -> int:
     except OSError as taken:
         listener.close()
         raise MiaError(f"port {port} is already in use, perhaps by another mia serve") from taken
-    config = uvicorn.Config(
-        create_app(run_worker=True),
-        access_log=False,  # a search's query string holds text from prompts, and prompts stay out of logs
-        log_level="warning",
-        server_header=False,
-        http="h11",  # the parser the Guard's checks were tested against: another could read a request differently
-        proxy_headers=False,  # nothing sits in front of this, so a client's forwarded headers mean nothing
-        ws="none",
-        timeout_graceful_shutdown=SHUTDOWN_SECONDS,
-    )
-    uvicorn.Server(config).run(sockets=[listener])
+    uvicorn.Server(_config(create_app(run_worker=True))).run(sockets=[listener])
     return 0
