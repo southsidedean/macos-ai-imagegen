@@ -61,6 +61,9 @@ MAX_TRACKED = 10_000  # how many devices and addresses the limiter remembers: ma
 MAX_CONNECTIONS, MAX_CONNECTIONS_PER_ADDRESS = 256, 64
 ARRIVAL_SECONDS = 15.0  # how long a request has to arrive, from its first byte or from connecting
 WRITE_STALL_SECONDS = 30.0  # how long a client can leave an answer unread while the buffer behind it is full
+# A pause in writing lasts until the kernel's buffer has mostly drained, and it can grow by itself to several MB. Then a
+# client reading steadily but slowly could look stalled. Capped, only one below about 10 KB a second can.
+SEND_BUFFER_BYTES = 256 * 1024
 # A handshake is the one thing a stranger can make mia do before any other limit applies. A device on a LAN needs moments.
 HANDSHAKE_SECONDS = 5.0
 MAX_HANDSHAKES, MAX_HANDSHAKES_PER_ADDRESS = 64, 16
@@ -91,6 +94,7 @@ class Connection(H11Protocol):
 
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
         super().connection_made(transport)
+        transport.get_extra_info("socket").setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER_BYTES)
         address = self.client[0] if self.client else None
         from_here = [other for other in self.connections if isinstance(other, H11Protocol) and other.client and other.client[0] == address]
         if len(self.connections) > MAX_CONNECTIONS or len(from_here) > MAX_CONNECTIONS_PER_ADDRESS:

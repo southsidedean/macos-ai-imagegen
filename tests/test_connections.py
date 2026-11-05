@@ -186,6 +186,7 @@ def test_requests_that_are_never_read_dont_hold_a_connection_for_good(port: int,
 
 def test_a_slow_reader_who_keeps_reading_gets_the_whole_answer(port: int, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "WRITE_STALL_SECONDS", 0.5)
+    monkeypatch.setattr(server, "SEND_BUFFER_BYTES", 32 * 1024)  # as small as the limit is short, as a pause lasts until it drains
     count = 300
     held = socket.socket()
     held.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)

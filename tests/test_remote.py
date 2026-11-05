@@ -805,6 +805,16 @@ def test_requests_that_are_never_read_dont_hold_an_https_connection_for_good(run
     held.close()
 
 
+def test_connections_get_the_smaller_send_buffer_so_a_slow_reader_doesnt_look_stalled(running: Running, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Linux doubles what it's given, and neither system starts with this size by itself.
+    monkeypatch.setattr(server, "SEND_BUFFER_BYTES", 40_000)
+    for port, wrap in ((running.port, secure_socket), (running.plain_port, connected)):
+        with wrap(port) as held:
+            assert ask(held, host=NAME if wrap is secure_socket else "127.0.0.1")[0] == 200
+            connection = next(iter(running.server.server_state.connections))
+            assert 40_000 <= connection.transport.get_extra_info("socket").getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF) <= 80_000
+
+
 def test_a_renewal_that_fails_is_logged_and_tried_again(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     settings = remote.turn_on([NAME], [])
     monkeypatch.setattr(server, "RENEW_CHECK_SECONDS", 0.01)

@@ -33,7 +33,7 @@ Working today, and tested:
 - Requests and event streams are limited per device. The queue's length and a request's size have limits too, and refused
   requests are limited per address.
 - A connection gets 15 seconds to deliver a whole request, and is closed if an answer sits unread for 30 seconds with the
-  buffers behind it full. Connections are capped per address and overall, so holding many open with no token is limited.
+  buffers behind it full, which a client still reading only reaches below about 10 KB a second. Connections are capped per address and overall, so holding many open with no token is limited.
 - A refusal from the REST API doesn't repeat your prompt, and prompts stay out of the server's output.
 - Deleting an image also deletes the job that made it. Finished jobs, which hold prompts, are forgotten after 30
   days.

@@ -448,6 +448,9 @@ An independent review read every file, and reproduced what it could. All of this
 
 - With no token, requests sent together and never read held a connection for good: once a request has arrived, nothing timed
   an answer waiting to be read. Now 30 seconds with the buffers full closes it. Without that, 64 of them locked out an address.
+  A pause in writing lasts until the kernel's send buffer drains, not until the client stops reading: on Linux, a reader at 20 KB a
+  second paused for 29 seconds. So each connection's buffer is capped at 256 KB, which cut that to 5 seconds. Speed over a
+  real LAN stayed at 47 MB a second, the same as with 4 MB.
 - `GET /mcp` was a stream outside the limits that outlasted its token. It carries nothing in this mode, so it now answers 405.
 - 30 bad tokens from this Mac stopped every device's MCP tools, as a tool's own calls shared this Mac's address.
 - An unexpected error could end the HTTPS accept loop for good, silently. macOS can give no address for a reset connection.

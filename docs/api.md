@@ -126,7 +126,7 @@ Tokens go only in the `Authorization` header, never in a URL, where they would e
 | Open event streams | 8 per device, 32 in all | 429, with `Retry-After` |
 | A request's size | 64 KB | 413, or 411 with no `Content-Length` |
 | Time for a whole request to arrive | 15 seconds | The connection is closed |
-| An answer left unread, with the buffers behind it full | 30 seconds | The connection is closed |
+| An answer left unread, with the buffers behind it full | 30 seconds | The connection is closed. A client still reading only gets this below about 10 KB a second |
 | Open connections | 64 from one address, 256 in all | A new connection is closed |
 | Free disk needed to accept a job | 2 GB | 507 |
 
