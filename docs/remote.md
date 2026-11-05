@@ -6,7 +6,8 @@ connections from the internet.
 
 ## Start here
 
-On the Mac that runs mia, turn it on, restart the service, and make a token for the other device:
+You need mia installed, a model downloaded, and [the service](service.md) installed. On the Mac that runs mia, turn it on,
+restart the service, and make a token for the other device:
 
 ```sh
 uv run mia remote on
@@ -48,7 +49,8 @@ NODE_EXTRA_CA_CERTS=/path/to/mia-authority.pem claude
 Claude Code needs that setting every time it starts, so you may want to set it in your shell's profile.
 
 An assistant that only runs local commands can use `mia mcp` instead, which needs a copy of mia on that device. It works
-on Linux too, and doesn't need the image engine:
+on Linux too, and doesn't need the image engine: clone this repository, install [uv](https://docs.astral.sh/uv/), and run
+`uv sync --locked`. Then:
 
 ```sh
 claude mcp add mia -e MIA_TOKEN=paste-your-token-here -- uv run --directory /path/to/macos-ai-imagegen mia mcp --url https://my-mac.local:8766 --ca /path/to/mia-authority.pem
@@ -66,8 +68,8 @@ only what you gave is used:
 uv run mia remote on --name my-mac.local --address 192.168.1.20
 ```
 
-Both can be repeated. `--port` chooses another port, by default 8766. Running `mia remote on` again replaces the names and
-makes a new certificate, which takes effect when mia restarts.
+Both can be repeated. `--port` chooses another port, by default 8766, and mia keeps it until you choose another. Running
+`mia remote on` again replaces the names and addresses and makes a new certificate, which takes effect when mia restarts.
 
 To see how it stands, or turn it off:
 
@@ -77,18 +79,20 @@ uv run mia remote off
 uv run mia service restart
 ```
 
-`mia doctor` reports it too. Turning it off keeps the authority, so your devices won't have to trust a new one if you turn
+`mia doctor` reports it too, and warns if it's on but not listening. Turning it off keeps the authority, so your devices won't have to trust a new one if you turn
 it on again.
 
 ## If it doesn't connect
 
 - **The name isn't found.** `.local` names need Bonjour on the other device. Macs and iPhones have it, and some Linux
   machines don't. Use the address, or add a name to your own DNS or to that device's hosts file.
-- **Your Mac's address changed.** Run `mia remote on` with the new one, then restart mia. Your devices keep trusting it.
+- **Your Mac's address changed.** Run `mia remote on` again, which finds the new one, or give it every `--name` and
+  `--address` you use, because the ones you leave out stop working. Then restart mia. Your devices keep trusting it.
   To stop this happening, reserve an address for the Mac in your router's settings, or use the name.
 - **The certificate is refused.** The device has to be told about `mia-authority.pem`, and the address you use has to be one
   that `mia remote status` lists.
-- **Nothing answers.** `mia remote status` should say `listening now`. A sleeping Mac can't answer, and mia can't wake it:
+- **Nothing answers.** `mia remote status` should say `listening now`. If HTTPS can't start, mia keeps running for this
+  Mac alone, and its log says why, so look there if it says `not listening` after a restart. A sleeping Mac can't answer, and mia can't wake it:
   see [Good to know](service.md#good-to-know) in the service guide.
 - **The firewall.** If the macOS firewall is on, macOS may ask whether Python can accept incoming connections, or block it
   while you're away from the screen. Check System Settings, under Network, then Firewall. mia hasn't been tested with the
@@ -97,11 +101,14 @@ it on again.
 
 ## Good to know
 
+- **The Mac has to be awake.** mia keeps it awake during a job, but a sleeping Mac can't take a new request, and mia can't wake
+  it. If requests should arrive at any time, stop it sleeping in System Settings.
 - **Tokens are for devices you trust.** All tokens share one queue and history, so anyone with a token can see every prompt.
   Use `--scope read` for a device that should only look, `--days` for a token that should run out, and `mia token revoke`
   to stop one.
 - **Your own network only.** mia drops connections from anything but this Mac and the private address ranges, so a port
-  forwarded on your router wouldn't get through. That also rules out a VPN like Tailscale for now, which uses other addresses.
+  forwarded on your router normally wouldn't get through. That also rules out a VPN like Tailscale for now, which uses other
+  addresses. It does mean any private network the Mac joins, so turn this off if you take the Mac somewhere you don't trust.
 - **What strangers on your network can see.** Without a token they can read `/v1/health`, which gives mia's version, and
   `/openapi.json`, which lists its routes.
 - **IPv4 only,** for now. mia doesn't listen on IPv6, so a device on a network with nothing but IPv6 can't reach it.

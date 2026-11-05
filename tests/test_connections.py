@@ -157,6 +157,53 @@ def test_an_event_stream_outlives_the_limit_on_arriving(port: int) -> None:
     assert json.loads(seen.split(b"data: ")[-1].split(b"\n")[0])["state"] == "cancelled"
 
 
+def pipeline_and_never_read(port: int) -> socket.socket:
+    """Answers pile up in the buffers, until the transport has to stop writing. No token is needed for this."""
+    held = socket.socket()
+    held.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    held.connect(("127.0.0.1", port))
+    held.settimeout(10)
+    held.sendall(b"GET /openapi.json HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" * 3000)
+    return held
+
+
+def test_requests_that_are_never_read_dont_hold_a_connection_for_good(port: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "WRITE_STALL_SECONDS", 0.5)
+    monkeypatch.setattr(server, "MAX_CONNECTIONS_PER_ADDRESS", 3)
+    held = [pipeline_and_never_read(port) for _ in range(3)]
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        try:
+            if answers(port):
+                break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        raise AssertionError("the unread connections kept their slots")
+    for each in held:
+        each.close()
+
+
+def test_a_slow_reader_who_keeps_reading_gets_the_whole_answer(port: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "WRITE_STALL_SECONDS", 0.5)
+    monkeypatch.setattr(server, "SEND_BUFFER_BYTES", 32 * 1024)  # as small as the limit is short, as a pause lasts until it drains
+    count = 300
+    held = socket.socket()
+    held.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    held.connect(("127.0.0.1", port))
+    held.settimeout(10)
+    held.sendall(b"GET /openapi.json HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" * count)
+    seen = bytearray()
+    began = time.monotonic()
+    with held:
+        while piece := held.recv(65536):  # until the server hangs up, once it has sent everything
+            seen += piece
+            # Slow enough to take longer than the limit in all, with no one gap as long as it.
+            time.sleep(0.02 if time.monotonic() - began < server.WRITE_STALL_SECONDS * 3 else 0)
+    assert seen.count(b"HTTP/1.1 200 OK") == count
+    assert time.monotonic() - began > server.WRITE_STALL_SECONDS * 2, "too quick to prove anything"
+
+
 @pytest.mark.parametrize("limit", ["MAX_CONNECTIONS", "MAX_CONNECTIONS_PER_ADDRESS"])
 def test_connections_are_capped_and_a_slot_comes_back(port: int, monkeypatch: pytest.MonkeyPatch, limit: str) -> None:
     monkeypatch.setattr(server, "ARRIVAL_SECONDS", 30.0)

@@ -16,8 +16,8 @@
   changes the wait.
 - The service's log stays small: above 10 MB, it moves aside, and only one old log is kept.
 - Each new picture gets a small JPEG preview, at `GET /v1/images/{id}/preview`.
-- Connections have limits. A request has 15 seconds to arrive, and connections are capped at 64 from one address
-  and 256 overall.
+- Connections have limits. A request has 15 seconds to arrive, an answer left unread for 30 seconds closes the connection,
+  and connections are capped at 64 from one address and 256 overall.
 - Every path but `/v1/health` and `/openapi.json` now needs a token, even one that doesn't exist, and the token is
   checked before a request's body is read.
 - 30 refused requests in a minute from one address get a 429 until the minute has passed, even with a good token.

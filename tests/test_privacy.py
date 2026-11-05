@@ -1,7 +1,7 @@
 """Nothing in the repository describes a real machine or network: examples use stand-ins.
 
-The stand-ins are values nobody's network uses for real: 192.168.1.0/24, the RFC 5737 ranges,
-fd00::/48, my-mac.lan, and example.com addresses. On your own machine, the patterns in
+The stand-ins are 192.168.1.0/24, the RFC 5737 ranges, fd00::/48, my-mac.lan, my-mac.local, and example.com addresses. A real
+address in 192.168.1.0/24 would pass, as that's a common range for routers, so these tests can't be all that catches it. On your own machine, the patterns in
 .git/hooks/private-names (never committed) are checked too.
 """
 

@@ -14,6 +14,7 @@ import resource
 import shutil
 import socket
 import ssl
+import sys
 import threading
 import time
 from collections import defaultdict, deque
@@ -59,6 +60,10 @@ REFUSED_SIGN_INS_PER_MINUTE = 30
 MAX_TRACKED = 10_000  # how many devices and addresses the limiter remembers: many addresses mustn't use up memory
 MAX_CONNECTIONS, MAX_CONNECTIONS_PER_ADDRESS = 256, 64
 ARRIVAL_SECONDS = 15.0  # how long a request has to arrive, from its first byte or from connecting
+WRITE_STALL_SECONDS = 30.0  # how long a client can leave an answer unread while the buffer behind it is full
+# A pause in writing lasts until the kernel's buffer has mostly drained, and it can grow by itself to several MB. Then a
+# client reading steadily but slowly could look stalled. Capped, only one below about 10 KB a second can.
+SEND_BUFFER_BYTES = 256 * 1024
 # A handshake is the one thing a stranger can make mia do before any other limit applies. A device on a LAN needs moments.
 HANDSHAKE_SECONDS = 5.0
 MAX_HANDSHAKES, MAX_HANDSHAKES_PER_ADDRESS = 64, 16
@@ -66,6 +71,7 @@ TLS_CLOSE_SECONDS = 5.0  # asyncio waits 30 by default for the other side to agr
 RENEW_CHECK_SECONDS = 6 * 3600  # a Mac used as a server can run for longer than its certificate lasts
 PUBLIC = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json")}
 DEVICE = "mia.device"  # where the Guard leaves the device it signed in, in the request's scope
+WITHIN = "mia.within"  # the address of an MCP tool's calls to this API, which no real connection can have
 EVENT_POLL_SECONDS = 0.5
 EVENT_KEEPALIVE_SECONDS = 15.0
 EVENT_MAX_SECONDS = 3600.0
@@ -84,9 +90,11 @@ class Connection(H11Protocol):
     that never finishes sending a request would otherwise stay for as long as the sender likes."""
 
     _deadline: asyncio.TimerHandle | None = None
+    _stall: asyncio.TimerHandle | None = None
 
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
         super().connection_made(transport)
+        transport.get_extra_info("socket").setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER_BYTES)
         address = self.client[0] if self.client else None
         from_here = [other for other in self.connections if isinstance(other, H11Protocol) and other.client and other.client[0] == address]
         if len(self.connections) > MAX_CONNECTIONS or len(from_here) > MAX_CONNECTIONS_PER_ADDRESS:
@@ -100,7 +108,24 @@ class Connection(H11Protocol):
 
     def connection_lost(self, exc: Exception | None) -> None:
         self._stop_watching()
+        self._forget_stall()
         super().connection_lost(exc)
+
+    def pause_writing(self) -> None:
+        """A request that has arrived stops the deadline above, and no other timer runs while an answer waits to be
+        read. So requests sent together and never read would hold the connection for good, even with no token."""
+        super().pause_writing()
+        if self._stall is None:
+            self._stall = self.loop.call_later(WRITE_STALL_SECONDS, self.transport.abort)
+
+    def resume_writing(self) -> None:
+        self._forget_stall()
+        super().resume_writing()
+
+    def _forget_stall(self) -> None:
+        if self._stall is not None:
+            self._stall.cancel()
+            self._stall = None
 
     def _watch_arrival(self) -> None:
         """One deadline for the whole request, which more data doesn't move: a byte at a time mustn't get around it."""
@@ -153,13 +178,17 @@ class Guard:
         """A token can't be guessed, so the limit on refusals is there to stop strangers making mia do work. It comes
         first, so an address past it costs no database. A device on that address waits with the rest, for a minute."""
         address = scope["client"][0] if scope.get("client") else "unknown"
-        if self.limiter.full(address, "refused", REFUSED_SIGN_INS_PER_MINUTE):
+        # A tool's own calls were signed in on the way to /mcp, and all share one address, so they don't count: bad tokens
+        # sent by something on this Mac would otherwise stop the tools of every device.
+        counted = address != WITHIN
+        if counted and self.limiter.full(address, "refused", REFUSED_SIGN_INS_PER_MINUTE):
             return JSONResponse({"detail": "too many refused requests"}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
         given = [value for key, value in pairs if key == "authorization"]
         scheme, _, presented = (given[0] if len(given) == 1 else "").partition(" ")
         found = await asyncio.to_thread(tokens.verify, presented.strip()) if scheme.lower() == "bearer" else None
         if found is None:
-            self.limiter.allow(address, "refused", REFUSED_SIGN_INS_PER_MINUTE)
+            if counted:
+                self.limiter.allow(address, "refused", REFUSED_SIGN_INS_PER_MINUTE)
             return JSONResponse({"detail": "a valid token is needed"}, status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"})
         if not self.limiter.allow(found.id, "all", REQUESTS_PER_MINUTE):
             return JSONResponse({"detail": "too many requests"}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
@@ -522,9 +551,15 @@ def create_app(run_worker: bool = False, names: Iterable[str] = ()) -> FastAPI:
             ],
         }
 
+    # MCP's optional stream for messages from the server, which this server never sends. Left to the SDK, it stays open
+    # with no limit, and outlasts its token. The spec lets a server answer 405, and clients carry on without it.
+    @app.get("/mcp", include_in_schema=False)
+    def no_stream(_device: Annotated[tokens.Device, Depends(device)]) -> Response:
+        return Response(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, headers={"Allow": "POST"})
+
     # The tools call this same app with the assistant's own token, so the Guard and the routes check them as usual.
     # The Guard has already checked Host and Origin by the time /mcp runs, so there's one list of allowed names.
-    within = httpx2.AsyncClient(transport=httpx2.ASGITransport(app, raise_app_exceptions=False), base_url=f"http://{HOST}")
+    within = httpx2.AsyncClient(transport=httpx2.ASGITransport(app, raise_app_exceptions=False, client=(WITHIN, 0)), base_url=f"http://{HOST}")
     assistant = mcp_server.build(within, lambda ctx: (ctx.headers or {}).get("authorization"))
     assistants.append(assistant)
     # Its route is added directly, because a mount would answer only at /mcp/ and send clients a redirect.
@@ -596,17 +631,27 @@ class Server(uvicorn.Server):
         while True:
             try:
                 held, peer = await loop.sock_accept(secure.listener)
+            except ConnectionAbortedError:  # the client gave up while waiting, which says nothing about this listener
+                continue
             except OSError:  # out of files, most likely: wait for some to come back, as asyncio's own server does
                 await asyncio.sleep(1)
                 continue
-            address = peer[0]
-            waiting = sum(1 for other in self._handshakes.values() if other == address)
-            if not remote.nearby(address) or len(self._handshakes) >= MAX_HANDSHAKES or waiting >= MAX_HANDSHAKES_PER_ADDRESS:
+            try:
+                self._admit(held, peer, secure)
+            except Exception:  # this loop ending would silently stop HTTPS, with everything else still looking fine
+                logger.exception("mia couldn't take an HTTPS connection")
                 held.close()
-                continue
-            task = asyncio.create_task(self._shake_hands(held, secure))
-            self._handshakes[task] = address
-            task.add_done_callback(self._handshakes.pop)
+
+    def _admit(self, held: socket.socket, peer: Any, secure: Secure) -> None:
+        # macOS can give no address for a connection that was reset while it waited.
+        address = peer[0] if peer else None
+        waiting = sum(1 for other in self._handshakes.values() if other == address)
+        if address is None or not remote.nearby(address) or len(self._handshakes) >= MAX_HANDSHAKES or waiting >= MAX_HANDSHAKES_PER_ADDRESS:
+            held.close()
+            return
+        task = asyncio.create_task(self._shake_hands(held, secure))
+        self._handshakes[task] = address
+        task.add_done_callback(self._handshakes.pop)
 
     async def _shake_hands(self, held: socket.socket, secure: Secure) -> None:
         def connection() -> asyncio.Protocol:
@@ -619,12 +664,21 @@ class Server(uvicorn.Server):
             )
 
     async def _renew(self, secure: Secure) -> None:
+        """Compares the file with what's loaded, as mia remote on can also replace it. The settings are read each time,
+        or this would put back names that were changed while it ran."""
+        loaded = remote.certificate_serial()
         while True:
             await asyncio.sleep(RENEW_CHECK_SECONDS)
             try:
-                if await asyncio.to_thread(remote.renew, secure.settings):
+                settings = remote.load()
+                if settings is None:
+                    continue
+                await asyncio.to_thread(remote.renew, settings)
+                current = remote.certificate_serial()
+                if current != loaded:
                     remote.reload(secure.context)
-            except (MiaError, OSError, ValueError) as problem:
+                    loaded = current
+            except Exception as problem:  # the next check can try again, as long as this keeps running
                 logger.warning("mia couldn't renew its HTTPS certificate: %s", problem)
 
 
@@ -633,6 +687,9 @@ def _bound(host: str, port: int) -> socket.socket:
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         listener.bind((host, port))
+    except OverflowError:
+        listener.close()
+        raise MiaError(f"{port} isn't a port: choose one up to 65535") from None
     except OSError as taken:
         listener.close()
         raise MiaError(f"port {port} is already in use, perhaps by another mia serve") from taken
@@ -640,13 +697,19 @@ def _bound(host: str, port: int) -> socket.socket:
 
 
 def _secure(port: int) -> Secure | None:
-    settings = remote.load()
-    if settings is None:
+    """A problem with HTTPS leaves this Mac's own API running, and mia doctor and mia remote status say it isn't listening."""
+    try:
+        settings = remote.load()
+        if settings is None:
+            return None
+        if settings.port == port:
+            raise MiaError(f"HTTPS and this Mac's own HTTP can't share port {port}: run mia remote on --port with another")
+        remote.renew(settings)
+        context = remote.context()
+        return Secure(_bound(ANYWHERE, settings.port), context, settings)
+    except (MiaError, OSError, ValueError, TypeError) as problem:
+        print(f"mia: HTTPS didn't start, so only this Mac can reach mia: {problem}", file=sys.stderr, flush=True)
         return None
-    if settings.port == port:
-        raise MiaError(f"HTTPS and this Mac's own HTTP can't share port {port}: run mia remote on --port with another")
-    remote.renew(settings)
-    return Secure(_bound(ANYWHERE, settings.port), remote.context(), settings)
 
 
 def serve(port: int = PORT) -> int:

@@ -86,7 +86,7 @@ def test_the_logos_are_labelled_and_self_contained(name: str) -> None:
     assert "href" not in logo
 
 
-@pytest.mark.parametrize("name", ["README.md", "CHANGELOG.md", "SECURITY.md", "PLAN.md", "docs/roadmap.md"])
+@pytest.mark.parametrize("name", ["README.md", "CHANGELOG.md", "SECURITY.md", "PLAN.md", "docs/roadmap.md", "docs/api.md", "docs/mcp.md", "docs/remote.md", "docs/service.md"])
 def test_links_between_our_own_files_work(name: str) -> None:
     source = ROOT / name
     for target in re.findall(r"\]\(([^)#\s]+)(?:#[^)\s]*)?\)|srcset=\"([^\"]+)\"|src=\"([^\"]+)\"", source.read_text(encoding="utf-8")):

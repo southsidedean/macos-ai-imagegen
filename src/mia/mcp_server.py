@@ -111,7 +111,7 @@ def build(http: httpx2.AsyncClient, authorization: Callable[[Context], str | Non
         height: Annotated[int, Field(ge=MIN_SIDE, le=MAX_SIDE, description="A multiple of 16")] = 1024,
         steps: Annotated[int | None, Field(ge=1, le=MAX_STEPS, description="Leave out for what the model suggests")] = None,
         wait_seconds: Wait = 0,
-        idempotency_key: Annotated[str | None, Field(max_length=200, description="Any text: sending it again gives back the same job")] = None,
+        idempotency_key: Annotated[str | None, Field(max_length=200, pattern="^[!-~]+$", description="Letters, digits, and punctuation, with no spaces: sending it again gives back the same job")] = None,
     ) -> list[ContentBlock]:
         """Starts making an image, and can wait a limited time for it. It runs on the user's Mac, one job at a time."""
         body = {"prompt": prompt, "model": model, "seed": seed, "width": width, "height": height, "steps": steps}
@@ -168,16 +168,21 @@ def build(http: httpx2.AsyncClient, authorization: Callable[[Context], str | Non
 
 def check_url(url: str) -> str:
     """Tokens and prompts travel to this address, so only this Mac may be reached without HTTPS."""
-    parts = urlsplit(url)
+    wrong = MiaError("mia's address should look like https://my-mac.local:8766, with nothing after the port")
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # reading it is what checks it
+    except ValueError:
+        raise wrong from None
     if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password or parts.path.strip("/") or parts.query or parts.fragment:
-        raise MiaError("MIA_URL should look like https://my-mac.lan:8766, with nothing after the port")
+        raise wrong
     if parts.scheme == "http":
         try:
             local = parts.hostname == "localhost" or ip_address(parts.hostname).is_loopback
         except ValueError:
             local = False
         if not local:
-            raise MiaError("MIA_URL has to use https to reach another machine")
+            raise MiaError("mia's address has to use https to reach another machine")
     return url.rstrip("/")
 
 
@@ -189,5 +194,8 @@ def bridge(url: str, token: str, authority: str | None = None) -> MCPServer:
         verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=authority) if authority else True
     except OSError as problem:
         raise MiaError(f"mia can't use {authority} as a certificate authority: {problem.strerror or problem}") from None
-    http = httpx2.AsyncClient(base_url=checked, timeout=httpx2.Timeout(60.0), trust_env=False, verify=verify)
+    try:
+        http = httpx2.AsyncClient(base_url=checked, timeout=httpx2.Timeout(60.0), trust_env=False, verify=verify)
+    except httpx2.InvalidURL:
+        raise MiaError("mia's address should look like https://my-mac.local:8766, with nothing after the port") from None
     return build(http, lambda _ctx: f"Bearer {token}")

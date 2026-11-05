@@ -1,11 +1,10 @@
-"""The mia command. Its output never includes secrets, and only `history` prints prompts back."""
+"""The mia command. Only `token create` prints a secret, once, and only `history` prints prompts back."""
 
 from __future__ import annotations
 
 import argparse
 import os
 import signal
-import socket
 import sys
 import time
 from collections.abc import Sequence
@@ -149,12 +148,15 @@ def _service(args: argparse.Namespace) -> int:
 
 
 def _remote(args: argparse.Namespace) -> int:
-    from mia import remote
+    from mia import remote, service
 
     if args.action == "on":
+        port = args.port or remote.saved_port()
+        if port == service.installed_port():
+            raise MiaError(f"the service already uses port {port} for this Mac's own HTTP: choose another with --port")
         names = args.name or ([] if args.address else remote.suggested_names())
         addresses = args.address or ([] if args.name else remote.suggested_addresses())
-        settings = remote.turn_on(names, addresses, args.port, args.new_authority)
+        settings = remote.turn_on(names, addresses, port, args.new_authority)
         print("Remote access is on, for your own network, at:")
         for url in settings.urls:
             print(f"  {url}")
@@ -173,18 +175,10 @@ def _remote(args: argparse.Namespace) -> int:
             print("off: mia remote on turns it on")
             return 0
         print("on, at " + ", ".join(found.settings.urls))
-        print("listening now" if _listening(found.settings.port) else "not listening: it starts with mia serve, and mia service restart does that")
+        print("listening now" if found.listening else "not listening: it starts with mia serve, and if that's running, its log says why")
         print(f"certificate until {found.certificate_ends:%Y-%m-%d}, renewed by itself" if found.certificate_ends else "no certificate: run mia remote on again")
         print(f"authority's fingerprint: {remote.fingerprint()}")
     return 0
-
-
-def _listening(port: int) -> bool:
-    try:
-        socket.create_connection(("127.0.0.1", port), timeout=2).close()
-    except OSError:
-        return False
-    return True
 
 
 def _mcp(url: str, authority: str | None) -> int:
@@ -218,7 +212,7 @@ def _parser() -> argparse.ArgumentParser:
     pull.add_argument("model", nargs="?", default=catalog.DEFAULT.id, help="default: %(default)s")
     pull.add_argument("--yes", action="store_true", help="don't ask first")
     commands.add_parser("history", help="recent images, with their prompts")
-    serve = commands.add_parser("serve", help="run the REST API and a worker")
+    serve = commands.add_parser("serve", help="run the REST API, MCP, and a worker")
     serve.add_argument("--port", type=int, default=8765, help="default: %(default)s")
     keeper = commands.add_parser("service", help="keep mia serve running, starting at login")
     steps = keeper.add_subparsers(dest="action")
@@ -234,7 +228,7 @@ def _parser() -> argparse.ArgumentParser:
     turn_on = switches.add_parser("on", help="turn it on, or change its names; mia serve has to start again to see it")
     turn_on.add_argument("--name", action="append", metavar="NAME", help="a name devices use for this Mac, such as my-mac.local; repeatable; default: its Bonjour name")
     turn_on.add_argument("--address", action="append", metavar="ADDRESS", help="an address devices use for this Mac; repeatable; default: its current one")
-    turn_on.add_argument("--port", type=int, default=8766, help="default: %(default)s")
+    turn_on.add_argument("--port", type=int, help="default: the one it has, or 8766")
     turn_on.add_argument("--new-authority", action="store_true", help="replace the certificate authority: every device has to trust the new one")
     switches.add_parser("off", help="turn it off, keeping the certificate authority; mia serve has to start again to see it")
     switches.add_parser("authority", help="print the certificate authority, for your other devices to trust; it holds no secret")

@@ -171,6 +171,8 @@ def _remote(state: remote.State | None) -> Finding:
         return Finding(WARN, "Remote access", "on, but it has no working certificate or settings; run mia remote on")
     if state.certificate_ends <= datetime.now(UTC):
         return Finding(WARN, "Remote access", "its certificate has run out; run mia service restart to renew it")
+    if not state.listening:
+        return Finding(WARN, "Remote access", "on, but not listening. It starts with mia serve, and if that's running, its log says why")
     return Finding(PASS, "Remote access", f"on, at {', '.join(state.settings.urls)}")
 
 

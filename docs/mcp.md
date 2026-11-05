@@ -39,7 +39,7 @@ two things in their settings: the address `http://127.0.0.1:8765/mcp`, and the `
 
 A finished picture comes back as two things: a preview, a JPEG up to 512 pixels on its longest side, which the assistant
 can see, and a `mia://images/...` link to the full PNG, which it can read if it needs to. Images made before 0.4 have
-only the link.
+only the link, and an image saved elsewhere with `mia generate --output` can't be fetched this way at all.
 
 The assistant can't delete images, and it can't download or remove models, whatever its token's scope. A download can
 take many gigabytes, so that choice stays with you. Give it a `read` token if it should only look.

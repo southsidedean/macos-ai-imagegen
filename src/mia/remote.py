@@ -56,6 +56,7 @@ class Settings:
 class State:
     settings: Settings
     certificate_ends: datetime | None  # None if it hasn't been made, or can't be read
+    listening: bool = True
 
 
 def _folder() -> Path:
@@ -139,7 +140,14 @@ def load() -> Settings | None:
     """The settings, or None if remote access is off."""
     try:
         saved = json.loads(_settings_file().read_text())
-        return Settings(tuple(saved["names"]), tuple(saved["addresses"]), int(saved["port"]))
+        names, addresses, port = saved["names"], saved["addresses"], saved["port"]
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names) or not isinstance(addresses, list):
+            raise TypeError
+        for address in addresses:
+            ip_address(address)
+        if not isinstance(port, int) or not 0 < port <= 65535:
+            raise ValueError
+        return Settings(tuple(names), tuple(addresses), port)
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError) as problem:
@@ -200,19 +208,28 @@ def _usage(digital_signature: bool = False, key_cert_sign: bool = False, crl_sig
 
 
 def _read_certificate(path: Path) -> x509.Certificate:
-    return x509.load_pem_x509_certificate(path.read_bytes())
+    try:
+        return x509.load_pem_x509_certificate(path.read_bytes())
+    except ValueError:
+        raise MiaError(f"{path} is damaged. If it's the authority, mia remote on --new-authority replaces it, and every device has to trust the new one") from None
 
 
 def _uncovered(names: tuple[str, ...]) -> list[str]:
     """The names the authority can't vouch for."""
-    constraints = _read_certificate(authority_file()).extensions.get_extension_for_class(x509.NameConstraints).value
+    try:
+        constraints = _read_certificate(authority_file()).extensions.get_extension_for_class(x509.NameConstraints).value
+    except x509.ExtensionNotFound:
+        raise MiaError("mia's certificate authority has no limits, so mia didn't make it: run mia remote on --new-authority") from None
     allowed = [item.value for item in constraints.permitted_subtrees or [] if isinstance(item, x509.DNSName)]
     return [name for name in names if not any(name == root or name.endswith(f".{root}") for root in allowed)]
 
 
 def _issue(settings: Settings) -> None:
     authority = _read_certificate(authority_file())
-    signer = serialization.load_pem_private_key(_authority_key().read_bytes(), password=None)
+    try:
+        signer = serialization.load_pem_private_key(_authority_key().read_bytes(), password=None)
+    except (ValueError, TypeError):
+        raise MiaError("mia's certificate authority has a damaged key: run mia remote on --new-authority, and trust the new one on each device") from None
     if not isinstance(signer, ec.EllipticCurvePrivateKey):
         raise MiaError("mia's certificate authority has a kind of key mia didn't make: run mia remote on --new-authority")
     now = datetime.now(UTC)
@@ -282,10 +299,11 @@ def renew(settings: Settings) -> bool:
         covers = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         current = {*covers.get_values_for_type(x509.DNSName), *(str(item) for item in covers.get_values_for_type(x509.IPAddress))}
         due = certificate.not_valid_after_utc - datetime.now(UTC) < timedelta(days=RENEW_DAYS)
-        usable = _certificate_key().exists()
-    except (OSError, ValueError, x509.ExtensionNotFound):
-        current, due, usable = set(), True, False
-    if usable and not due and current == set(settings.hosts):
+        # Loading them also catches a key that doesn't match, from a crash between writing the two files.
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(certificate_file(), _certificate_key())
+    except (MiaError, OSError, ValueError, x509.ExtensionNotFound):
+        current, due = set(), True
+    if not due and current == set(settings.hosts):
         return False
     _issue(settings)
     return True
@@ -305,6 +323,30 @@ def reload(made: ssl.SSLContext) -> None:
     made.load_cert_chain(certificate_file(), _certificate_key())
 
 
+def certificate_serial() -> int | None:
+    try:
+        return _read_certificate(certificate_file()).serial_number
+    except (MiaError, OSError):
+        return None
+
+
+def saved_port() -> int:
+    """The port to keep when mia remote on is run again without one."""
+    try:
+        settings = load()
+    except MiaError:
+        return DEFAULT_PORT
+    return settings.port if settings else DEFAULT_PORT
+
+
+def listening(port: int) -> bool:
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    except OSError:
+        return False
+    return True
+
+
 def fingerprint() -> str:
     """What to compare on the other device, to know the file you copied is the one this Mac made."""
     return _read_certificate(authority_file()).fingerprint(hashes.SHA256()).hex(":").upper()
@@ -315,7 +357,8 @@ def state() -> State | None:
     settings = load()
     if settings is None:
         return None
+    is_listening = listening(settings.port)
     try:
-        return State(settings, _read_certificate(certificate_file()).not_valid_after_utc)
-    except (OSError, ValueError):
-        return State(settings, None)
+        return State(settings, _read_certificate(certificate_file()).not_valid_after_utc, is_listening)
+    except (MiaError, OSError):
+        return State(settings, None, is_listening)

@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -31,6 +32,9 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MIA_SERVICE_LABEL", raising=False)
 
 
+REAL_CONFIRM = service._confirm_answering
+
+
 class Launchctl:
     """Stands in for launchctl, because a test must never change the real services on a Mac."""
 
@@ -39,6 +43,8 @@ class Launchctl:
         self.answers: dict[str, list[subprocess.CompletedProcess[str]]] = {}
         monkeypatch.setattr(service, "_launchctl", self)
         monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        # Nothing is really started here, so nothing could answer. The tests of that wait put it back.
+        monkeypatch.setattr(service, "_confirm_answering", lambda _port: None)
 
     def __call__(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         self.calls.append(arguments)
@@ -156,6 +162,99 @@ def test_a_port_in_use_is_refused_before_anything_is_installed(launchctl: Launch
         with pytest.raises(MiaError, match="in use"):
             service.install(int(taken.getsockname()[1]))
     assert not service.plist_file().exists() and "bootstrap" not in launchctl.verbs()
+
+
+def test_a_busy_port_leaves_the_running_service_and_its_job_alone(launchctl: Launchctl) -> None:
+    service.install(free_port())
+    launchctl.calls.clear()
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        with pytest.raises(MiaError, match="in use"):
+            service.install(int(taken.getsockname()[1]))
+    assert "bootout" not in launchctl.verbs()
+
+
+@pytest.mark.parametrize("port", [0, 70000, -1])
+def test_a_port_that_cant_be_is_refused_before_anything_stops(launchctl: Launchctl, port: int) -> None:
+    with pytest.raises(MiaError, match="isn't a port"):
+        service.install(port)
+    assert launchctl.calls == []
+
+
+def test_the_service_on_its_own_port_can_be_replaced(launchctl: Launchctl) -> None:
+    with socket.socket() as itself:
+        itself.bind(("127.0.0.1", 0))
+        itself.listen()
+        port = int(itself.getsockname()[1])
+        service.plist_file().parent.mkdir(parents=True)
+        service.plist_file().write_bytes(plistlib.dumps({"ProgramArguments": ["python", "-m", "mia", "serve", "--port", str(port)]}))
+        with pytest.raises(MiaError, match="in use"):  # it isn't loaded, so something else must hold the port
+            launchctl.answers["print"] = [Launchctl.result(113, err="Could not find service")]
+            service.install(port)
+        assert launchctl.verbs() == ["print"]
+        launchctl.calls.clear()
+        launchctl.answers["print"] = [Launchctl.result(0)]
+        itself.close()  # as the old one does once it's stopped, though the check above saw it busy
+        service.install(port)
+    assert launchctl.verbs()[-1] == "bootstrap"
+
+
+@pytest.mark.parametrize("action", ["install", "restart", "start"])
+def test_a_server_that_never_answers_is_reported_with_its_log(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch, action: str) -> None:
+    port = free_port()
+    service.install(port)
+    monkeypatch.setattr(service, "_confirm_answering", REAL_CONFIRM)
+    monkeypatch.setattr(service, "ANSWER_WAIT_SECONDS", 0)
+    monkeypatch.setattr(service, "_running_version", lambda _port: None)
+    if action == "start":
+        launchctl.answers["print"] = [Launchctl.result(113, err="Could not find service")]
+    with pytest.raises(MiaError, match="isn't answering") as refused:
+        service.install(port) if action == "install" else getattr(service, action)()
+    assert str(service.log_file()) in str(refused.value)
+
+
+def test_waiting_ends_as_soon_as_it_answers(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = [None, None, "1.2.3"]
+    monkeypatch.setattr(service, "_confirm_answering", REAL_CONFIRM)
+    monkeypatch.setattr(service, "_running_version", lambda _port: answers.pop(0))
+    service.install(free_port())
+    assert answers == []
+
+
+@pytest.mark.parametrize("damage", [b"<?xml version='1.0'?><plist><dict>", b"<plist version='1.0'><array><string>x</string></array></plist>", b"\x00junk"])
+def test_a_damaged_service_file_is_described_and_not_a_crash(launchctl: Launchctl, damage: bytes, capsys: pytest.CaptureFixture[str]) -> None:
+    service.plist_file().parent.mkdir(parents=True)
+    service.plist_file().write_bytes(damage)
+    assert service.installed_port() is None
+    assert service.status() == service.Status(True, None, None, None)
+    with pytest.raises(MiaError, match="looks wrong"):
+        service.restart()
+    assert not [call for call in launchctl.calls if call[0] == "bootout"]
+
+
+def test_arguments_that_arent_a_list_dont_crash_it(launchctl: Launchctl) -> None:
+    service.plist_file().parent.mkdir(parents=True)
+    service.plist_file().write_bytes(plistlib.dumps({"ProgramArguments": "8765"}))
+    assert service.installed_port() is None
+
+
+def test_another_program_on_the_port_counts_as_not_answering() -> None:
+    with socket.socket() as other:
+        other.bind(("127.0.0.1", 0))
+        other.listen()
+        port = int(other.getsockname()[1])
+
+        def answer_nonsense() -> None:
+            held, _ = other.accept()
+            held.recv(1024)
+            held.sendall(b"not http at all\r\n\r\n")
+            held.close()
+
+        thread = threading.Thread(target=answer_nonsense, daemon=True)
+        thread.start()
+        assert service._running_version(port) is None
+        thread.join(5)
 
 
 def test_uninstalling_removes_the_agent_and_leaves_everything_else(launchctl: Launchctl, tmp_path: Path) -> None:
