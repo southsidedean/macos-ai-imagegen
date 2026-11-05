@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import time
@@ -116,6 +117,17 @@ def _token(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mcp(url: str) -> int:
+    """The token comes only from the environment: a command's arguments can be seen by other users of the Mac."""
+    token = os.environ.get("MIA_TOKEN")
+    if not token:
+        raise MiaError("MIA_TOKEN has to hold a token: make one on the Mac running mia serve, with mia token create")
+    from mia.mcp_server import bridge
+
+    bridge(url, token).run("stdio")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mia", description="Generate AI images on your own Mac.")
     parser.add_argument("--version", action="version", version=f"mia {__version__}")
@@ -138,6 +150,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("history", help="recent images, with their prompts")
     serve = commands.add_parser("serve", help="run the REST API and a worker, on this Mac only")
     serve.add_argument("--port", type=int, default=8765, help="default: %(default)s")
+    assistant = commands.add_parser("mcp", help="connect an AI assistant to mia serve, over stdin and stdout")
+    assistant.add_argument("--url", default=os.environ.get("MIA_URL", "http://127.0.0.1:8765"), help="where mia serve is; default: %(default)s")
     worker = commands.add_parser("worker", help="run jobs from the queue; mia serve starts this itself")
     worker.add_argument("--parent", type=int, help=argparse.SUPPRESS)
     device = commands.add_parser("token", help="the tokens that devices use with the API")
@@ -167,6 +181,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             from mia.server import serve
 
             return serve(args.port)
+        if args.command == "mcp":
+            return _mcp(args.url)
         if args.command == "worker":
             from mia.worker import run
 

@@ -150,7 +150,8 @@ GET    /v1/jobs/{id}/events      progress as server-sent events
 DELETE /v1/jobs/{id}             cancel
 GET    /v1/images                history, with search
 GET    /v1/images/{id}           settings and links
-GET    /v1/images/{id}/file      PNG (a smaller copy, ?size=, comes with MCP's previews in 0.4)
+GET    /v1/images/{id}/file      PNG
+GET    /v1/images/{id}/preview   a JPEG up to 512 pixels, which the worker makes with each image
 DELETE /v1/images/{id}           delete, which needs the admin scope
 GET    /v1/models                installed models and the catalog
 POST   /v1/models/inspect        what adding a repository would do; changes nothing (0.6)
@@ -165,8 +166,9 @@ can point at mia. It isn't in the plan until something needs it.
 
 ### MCP server
 
-Streamable HTTP at `/mcp`, sharing the API's tokens, and `mia mcp` for stdio, which is a thin bridge
-to the API. Both can run from a laptop to the Mac.
+Streamable HTTP at `/mcp`, stateless, sharing the API's tokens, and `mia mcp` for stdio, which is a thin bridge
+to the API. Both can run from a laptop to the Mac. Every tool calls the REST API, in process at `/mcp` and over the
+network from `mia mcp`, so tokens, scopes, limits, and checks have one home.
 
 | Tool | Scope | What it does |
 |---|---|---|
@@ -176,14 +178,16 @@ to the API. Both can run from a laptop to the Mac.
 | `mia_images` | read | Searches the history |
 | `mia_image` | read | One image as a preview plus a link to the full file |
 | `mia_models` | read | Installed models and the catalog |
-| `mia_inspect_model` | read | What adding a Hugging Face repository would do |
-| `mia_status` | read | Queue, memory, disk |
-| `mia_docs` | read | Searches mia's own docs |
+| `mia_inspect_model` | read | What adding a Hugging Face repository would do (0.6, with that feature) |
+| `mia_status` | read | The worker, the queue, and disk |
 
 Choices worth recording:
 
 - Base64 images use up an assistant's context, so tools return a small JPEG inline and a
-  `resource_link` to the full PNG.
+  `resource_link` to the full PNG. The worker makes the JPEG, because the server can't load Pillow. Images from
+  before 0.4 have no preview: nothing goes back to make them, and they still have the link.
+- `mia_docs`, which was to search mia's docs, was dropped from 0.4 (decided 2026-11-05). The docs aren't installed
+  with the package, and nothing has needed it yet.
 - Submit and poll comes first, because it works in every client. The SDK has types for MCP's newer
   Tasks, which are adopted once clients in use support them, without removing the plain tools.
 - Adding a model isn't a tool yet. An assistant can inspect a repository and tell you the
@@ -257,8 +261,8 @@ Workflows, adapted from ok3d and kia:
   - `uv lock --check` and a dependency vulnerability scan (pip-audit);
   - a smoke test in `tests/test_smoke.py` that starts the real server and worker with the fake engine,
     walks a job through the API, and kills the worker mid-job;
-  - joining in 0.4, which brings what they check: launchd plist generation and install scripts, and MCP
-    in that smoke test.
+  - MCP in that smoke test, over HTTP in both protocol eras and through `mia mcp`;
+  - joining in 0.4, which brings what they check: launchd plist generation and install scripts.
 - `codeql.yml`, `dependency-review.yml`, and `scorecard.yml`, as in ok3d.
 - `release.yml`: on a tag, checks that it's signed and matches the code's version, builds the package,
   attests it, and publishes a release with an SBOM and notes from `CHANGELOG.md`.
@@ -392,8 +396,13 @@ GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as b
   `2025-11-25` client could initialize, and it answered a bad `Origin` with 403 and a bad `Host` with
   421. Open SDK issues cover parts of the new revision, so it's pinned and tried with real clients
   in 0.4. Which clients need an older revision or support Tasks is still unknown.
+- A real MCP client: Claude Code 2.1.311, on the same Mac, over both HTTP and `mia mcp`, with the real model. One
+  `mia_generate` call that waited made the image, the assistant described the preview correctly, and it read the
+  full PNG through its `mia://` link, which it saved to a file of its own. Both runs gave the known pixels. It never
+  sent a chunked request, which the Guard refuses.
 
-Still open: real MCP clients, FLUX.1 dev, and the default cache against the capped one on the shipped versions.
+Still open: other MCP clients, a client on another machine, FLUX.1 dev, and the default cache against the capped one
+on the shipped versions.
 
 ### What 0.4 had to fix first
 

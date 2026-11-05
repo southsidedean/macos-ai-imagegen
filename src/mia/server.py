@@ -1,7 +1,8 @@
 """The REST API. It never imports an ML package: it reads and writes the database, and the worker does the rest.
 
 Everything but PUBLIC needs a token, and the Guard checks it before anything else runs, so a route added later
-can't be left open by accident. It listens only on this Mac for now: remote access arrives in 0.4, with HTTPS.
+can't be left open by accident. /mcp sits behind it too. It listens only on this Mac for now: remote access
+arrives in 0.4, with HTTPS.
 """
 
 import asyncio
@@ -20,15 +21,18 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import h11
+import httpx2
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request as HttpRequest, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ConfigDict, Field
 from uvicorn.protocols.http.h11_impl import H11Protocol
 
-from mia import __version__, catalog, history, jobs, models, paths, tokens
+from mia import __version__, catalog, history, jobs, mcp_server, models, paths, tokens
 from mia.engine import MAX_PROMPT, MiaError, Request, random_seed
 from mia.generate import engine_is_fake
 from mia.supervisor import Supervisor
@@ -311,12 +315,15 @@ def create_app(run_worker: bool = False) -> FastAPI:
     streams = Streams()
     supervisor = Supervisor() if run_worker else None
 
+    assistants: list[MCPServer] = []
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if supervisor:
             supervisor.start()
         try:
-            yield
+            async with assistants[0].session_manager.run():
+                yield
         finally:
             if supervisor:
                 supervisor.stop()
@@ -462,12 +469,20 @@ def create_app(run_worker: bool = False) -> FastAPI:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "that image's file isn't in mia's images folder")
         return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, no-store"})
 
+    @app.get("/v1/images/{image_id}/preview")
+    def get_image_preview(image_id: str, _device: Reader) -> FileResponse:
+        path = paths.preview_file(_record(image_id).id)
+        if not path.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "that image has no preview")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
+
     @app.delete("/v1/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_image(image_id: str, _device: Admin) -> None:
         record = _record(image_id)
         path = _inside_images(record)
         if path is not None:
             path.unlink(missing_ok=True)
+        paths.preview_file(record.id).unlink(missing_ok=True)
         history.delete(paths.history_file(), image_id)
 
     @app.get("/v1/models")
@@ -488,6 +503,20 @@ def create_app(run_worker: bool = False) -> FastAPI:
             ],
         }
 
+    # The tools call this same app with the assistant's own token, so the Guard and the routes check them as usual.
+    # The Guard has already checked Host and Origin by the time /mcp runs, so there's one list of allowed names.
+    within = httpx2.AsyncClient(transport=httpx2.ASGITransport(app, raise_app_exceptions=False), base_url=f"http://{HOST}")
+    assistant = mcp_server.build(within, lambda ctx: (ctx.headers or {}).get("authorization"))
+    assistants.append(assistant)
+    # Its route is added directly, because a mount would answer only at /mcp/ and send clients a redirect.
+    app.router.routes.extend(
+        assistant.streamable_http_app(
+            json_response=True,
+            stateless_http=True,
+            max_request_body_size=MAX_BODY,
+            transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        ).routes
+    )
     return app
 
 

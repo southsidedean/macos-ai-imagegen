@@ -63,6 +63,9 @@ def test_health_needs_no_token_and_says_nothing_private(api: TestClient) -> None
         ("GET", "/v1/images"),
         ("GET", "/v1/images/abc"),
         ("GET", "/v1/images/abc/file"),
+        ("GET", "/v1/images/abc/preview"),
+        ("POST", "/mcp"),
+        ("GET", "/mcp"),
         ("DELETE", "/v1/images/abc"),
         ("GET", "/v1/models"),
     ],
@@ -82,7 +85,9 @@ def test_every_route_in_the_app_needs_a_token_unless_named_here() -> None:
     public = server.PUBLIC
     checked = 0
     for route in server.create_app().routes:
-        # A mount or a websocket route has no methods, and MCP is likely to be one: name it here, or fail.
+        if getattr(route, "path", "") == "/mcp":  # the SDK's route, proved in test_mcp.py: the Guard covers it
+            continue
+        # A mount or a websocket route has no methods: name it here, or fail.
         assert getattr(route, "methods", None), f"{route} isn't a route this test understands"
         for method in getattr(route, "methods", None) or ():
             path = getattr(route, "path", "")

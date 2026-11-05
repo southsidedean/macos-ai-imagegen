@@ -138,6 +138,17 @@ case "$result $pixels" in
 *) fail "6. a job through the API: $result, pixels $(printf '%s' "$pixels" | cut -c1-12)" ;;
 esac
 if [ -s "$work/from-api.png" ]; then pass "7. the image downloaded through the API"; else fail "7. no image from the API"; fi
+call GET "/v1/images/$image/preview" >"$work/preview.jpg"
+# The real engine's preview, which the fake's can't stand in for: a JPEG, small, and with no metadata.
+if .venv/bin/python - "$work/preview.jpg" <<'CHECK'
+import sys
+from PIL import Image
+
+with Image.open(sys.argv[1]) as preview:
+    assert preview.format == "JPEG" and max(preview.size) == 512
+    assert not preview.getexif() and not {"exif", "xmp", "comment"} & set(preview.info)
+CHECK
+then pass "7b. the preview is a small JPEG with no metadata ($(wc -c <"$work/preview.jpg" | tr -d ' ') bytes)"; else fail "7b. the preview is wrong"; fi
 
 # Kill the worker while it holds a loaded model and is partway through a job.
 long=$(call POST /v1/jobs "$body" | field id)

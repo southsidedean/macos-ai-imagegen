@@ -2,6 +2,9 @@
 
 ## 0.4.0 (unreleased)
 
+- AI assistants can make and find images through MCP, at `/mcp` or through `mia mcp`, using the same tokens and limits as
+  the API. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/mcp.md) shows how to connect one.
+- Each new picture gets a small JPEG preview, at `GET /v1/images/{id}/preview`.
 - Connections have limits. A request has 15 seconds to arrive, and connections are capped at 64 from one address
   and 256 overall.
 - Every path but `/v1/health` and `/openapi.json` now needs a token, even one that doesn't exist, and the token is

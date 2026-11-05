@@ -66,3 +66,7 @@ class Engine(Protocol):
         image" means. Raises Cancelled when `cancelled` turns true, which is checked between steps.
         """
         ...
+
+    def preview(self, picture: Path, output: Path) -> None:
+        """Writes a small JPEG of a finished PNG, with no metadata. An assistant gets this in place of the whole image."""
+        ...
