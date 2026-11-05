@@ -43,7 +43,7 @@ dev = [
 ]
 
 [tool.uv]
-# The Mac mia runs on, and Linux for CI's tests. Nothing else needs a resolution.
+# The Mac mia runs on, and Linux for CI's tests and for mia mcp on another machine. Nothing else needs a resolution.
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'", "sys_platform == 'linux'"]
 
 [tool.setuptools.dynamic]

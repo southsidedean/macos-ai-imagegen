@@ -26,8 +26,8 @@ your other devices over HTTPS. The web page is still to come.
 
 ## What you can try today
 
-You need an Apple Silicon Mac on macOS 14 or newer, and [uv](https://docs.astral.sh/uv/). The first
-command installs the image engine, which takes a few GB with PyTorch. `mia models pull` then shows the
+You need an Apple Silicon Mac on macOS 14 or newer, and [uv](https://docs.astral.sh/uv/). `uv sync`
+installs the image engine, which takes a few GB with PyTorch. `mia models pull` then shows the
 default model's license and asks before downloading it, about 4.6 GB.
 
 ```sh

@@ -1,8 +1,7 @@
 name: tests
 
 # The checks every pull request must pass before it can merge (each job is a required check on
-# main). scripts/check.sh runs the same checks locally. The smoke test through the API and MCP joins
-# this file in the releases that bring it (PLAN.md, "Quality and CI"). No job ever runs a real model:
+# main). scripts/check.sh runs the same checks locally. No job ever runs a real model:
 # scripts/real-engine.sh does that, by hand.
 on:
   push:
@@ -90,7 +89,7 @@ jobs:
       - name: pytest, with coverage (lines the tests never run are listed, for reading)
         run: uv run --no-sync pytest -q --cov=mia --cov-report=term-missing:skip-covered
 
-  # mia runs only on macOS, so the tests run under macOS's own sh and tools on Apple Silicon too.
+  # mia serves only from macOS, so the tests run under macOS's own sh and tools on Apple Silicon too.
   # This job alone installs the real engine's packages, to catch one that stops fitting the others.
   pytest-macos:
     name: pytest (macOS)

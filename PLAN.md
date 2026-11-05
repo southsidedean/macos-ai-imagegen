@@ -53,7 +53,7 @@ direct way to use whichever open model you find on Hugging Face.
 | Reproducible | Each image records its prompt, seed, size, steps, engine and MLX versions, and model revision. Hugging Face models are pinned to a commit, so "make it again" means the same weights. |
 | Sleep | The worker holds a macOS power assertion (as `caffeinate -i` does) only while a job runs, so a remote request isn't cut off by idle sleep and the Mac can still sleep when idle. Waking a sleeping Mac for a request is out of scope. |
 | Service | One launchd user agent for `mia serve`, installed by `mia service install` (changed from two on 2026-11-05). The supervisor already restarts the worker, stops a stuck job, and records why a job failed, none of which launchd can do, and a second agent would have split that between two programs. A user agent means someone must be logged in; the docs say so, and cover automatic login for a Mac used as a server. |
-| Where things live | `~/Library/Application Support/mia/` by default (`MIA_HOME` moves it). The models folder has a setting of its own, so models can live on an external drive. Settings are in `settings.toml`, and the repository carries a commented `settings.example.toml`. |
+| Where things live | `~/Library/Application Support/mia/` by default (`MIA_HOME` moves it). The models folder has a setting of its own, so models can live on an external drive. A settings file is for later: for now, settings are environment variables and each command's options. |
 | AI integration | A ladder, as in kia: `mia doctor` with no AI at all, then your own assistant through MCP, then an AI-assisted install prompt at the top of the README. mia holds no AI provider keys and makes no calls to an LLM; the assistant you connect does its own prompt writing. |
 | Native app | Not before 1.0. The web page works on a phone and a laptop alike, without a separate app to build, sign, and notarize. |
 | License (decided 2026-11-04) | AGPL-3.0, as in kia, ok3d, and arr-vpn-stack. This covers mia's code. Each model has its own license. |
@@ -282,8 +282,8 @@ Rules carried over:
 - `main` protected: pull requests, squash merges, required checks, signed release tags.
 - `scripts/check.sh` runs what CI runs. `.githooks/` refuses commits on main, personal settings,
   secrets, private names, and images not looked at (`IMAGES_CHECKED=1`).
-- Tests can't reach the network and have a 60-second limit. Docs links and the docs' agreement with
-  the code are tested. `tests/test_privacy.py` checks tracked files.
+- Tests can't reach the network and have a 60-second limit. Links between our own docs are tested, and the
+  docs have to name the version the code is at, but no test compares a number in the docs with the code. `tests/test_privacy.py` checks tracked files.
 - No self-hosted runner. This repository is public, and a runner on a personal Mac would run
   code from pull requests next to private images and tokens. `scripts/real-engine.sh` runs by hand
   before each release and for any change to an engine, and the pull request says that it passed.
@@ -299,7 +299,7 @@ web page. `docs/roadmap.md` becomes the status page in 0.1.
 | 0.1 Spike and foundation | The spike below; repository, CI, hooks, logo, social preview, `mia doctor` | Spike results are written into this plan, and CI is green with required checks on |
 | 0.2 Engine and CLI | Engine interface, fake engine, mflux, FLUX from the catalog, `mia generate` | A FLUX image on a test Mac, reproduced from its recorded settings |
 | 0.3 Queue and API | Worker, SQLite, REST API, per-device tokens, cancel, progress, limits | A worker killed mid-job leaves the API up and the failure recorded |
-| 0.4 MCP and remote | MCP over HTTP and stdio, launchd agents, LAN HTTPS with mia's certificate authority, power assertion | An assistant on another machine on the LAN makes and fetches an image, with the Mac idle |
+| 0.4 MCP and remote | MCP over HTTP and stdio, the launchd agent, LAN HTTPS with mia's certificate authority, power assertion | An assistant on another machine on the LAN makes and fetches an image, with the Mac idle |
 | 0.5 Web page | The prompt page, queue, gallery, and sign-in | Generate and browse from a phone |
 | 0.6 Hugging Face models | Inspect and add, LoRAs, license classes, Keychain token, disk checks; diffusers as a second engine | A third-party FLUX fine-tune, a LoRA, and an SDXL model all work; a pickle-only repository is refused |
 | 0.7 Image to image | Image to image, inpainting, upscaling, batches, where the engines support them | Each works through the web page, API, and MCP |
@@ -419,7 +419,7 @@ GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as b
 - The log: launchd opens it to append, tested with a real agent, so emptying it after a copy leaves no gap. A real restart
   moved a large log aside. mia does this itself because `newsyslog` needs root to configure, which mia otherwise doesn't.
 
-Still open: other MCP clients, a client on another machine, FLUX.1 dev, the default cache against the capped one on the
+Still open: other MCP clients, a real assistant running on another machine, FLUX.1 dev, the default cache against the capped one on the
 shipped versions, and two things the service hasn't been through: a real restart and login, and a Mac actually reaching
 its idle sleep time during a job.
 
@@ -435,6 +435,31 @@ Tested on 2026-11-05, from a second machine on the same network, running Linux, 
   and through `mia mcp --ca`, and failed without the authority. It's what found the limit on addresses described under Security.
 - Not tested: a real assistant on the other machine (it didn't have one, so a scripted MCP client stood in), the macOS firewall
   turned on, a phone, and browsers, which the web page will need.
+- 0.4 is accepted on this evidence (decided 2026-11-05). The exit test's wording asks for an assistant on the other machine. A
+  scripted MCP client ran there, a real assistant ran on the Mac through its LAN address, and the pixels were the known ones, so
+  each part has been shown. The exact combination should be tried when a machine with an assistant is to hand.
+- "With the Mac idle" means awake, with nobody using it. A sleeping Mac can't answer and mia doesn't wake it, as decided above.
+  The test ran under a hand-run `mia serve`, with the Mac awake and in use. `scripts/real-engine.sh` covers HTTPS under launchd,
+  over loopback.
+
+### What the review of 0.4 found
+
+An independent review read every file, and reproduced what it could. All of this is fixed, with tests:
+
+- With no token, requests sent together and never read held a connection for good: once a request has arrived, nothing timed
+  an answer waiting to be read. Now 30 seconds with the buffers full closes it. Without that, 64 of them locked out an address.
+- `GET /mcp` was a stream outside the limits that outlasted its token. It carries nothing in this mode, so it now answers 405.
+- 30 bad tokens from this Mac stopped every device's MCP tools, as a tool's own calls shared this Mac's address.
+- An unexpected error could end the HTTPS accept loop for good, silently. macOS can give no address for a reset connection.
+- `mia service install` stopped the running service before refusing a busy port, and it and `restart` reported success
+  when the server couldn't start. `mia doctor` crashed if another program held the port or the service's file was damaged.
+- A problem with HTTPS took this Mac's own API down too. Now mia logs it and carries on for this Mac (decided 2026-11-05),
+  with `mia doctor` and `mia remote status` saying it isn't listening.
+
+Left as known limits, in `SECURITY.md`: a client reading just fast enough, any private network counting as yours, public
+domains accepted by `--name`, and log noise from `Upgrade` requests. Also left: an MCP wait counts many times against the
+limit, a hung worker can outlive a hand-run server killed with SIGKILL, and `scripts/real-engine.sh` can leave a process or
+agent behind if it's interrupted.
 
 ### What 0.4 had to fix first
 

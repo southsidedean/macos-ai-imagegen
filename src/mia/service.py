@@ -6,6 +6,7 @@ restarts can do. A user agent needs someone logged in, and in return it runs whe
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import plistlib
@@ -20,6 +21,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from mia import paths
 from mia.engine import MiaError
@@ -32,6 +34,7 @@ PASSED_ON = ("MIA_IDLE_SECONDS",)
 THROTTLE_SECONDS = 10  # launchd's own minimum, between restarts of something that keeps failing
 EXIT_SECONDS = 60  # longer than mia serve needs to stop its worker, as after launchd's default 20 it kills it
 START_WAIT_SECONDS = 70  # bootout can return before the old one has gone, and then bootstrap fails for a while
+ANSWER_WAIT_SECONDS = 30  # launchd says it started the moment it runs the program, whether or not that gets anywhere
 # launchctl's own words for "this isn't loaded", in the two forms it uses.
 NOT_LOADED = re.compile(r"could not find service|no such process", re.IGNORECASE)
 MAX_LOG_BYTES = 10 * 1024**2
@@ -135,9 +138,27 @@ def _load(deadline: float) -> None:
         time.sleep(1)
 
 
+def _confirm_answering(port: int) -> None:
+    deadline = time.monotonic() + ANSWER_WAIT_SECONDS
+    while _running_version(port) is None:
+        if time.monotonic() >= deadline:
+            raise MiaError(f"launchd started mia, but it isn't answering on port {port}, and launchd will keep trying. Its log says why: {log_file()}")
+        time.sleep(0.5)
+
+
+def _check_before_stopping(port: int) -> None:
+    """A refused install should leave the running service and its job alone. A busy port is only fine if it's
+    this agent that's on it, and it's about to go."""
+    if not 1 <= port <= 65535:
+        raise MiaError(f"{port} isn't a port: choose one from 1 to 65535")
+    if not _port_is_free(port) and not (_port_in_file() == port and _launchctl("print", _target()).returncode == 0):
+        raise MiaError(f"port {port} is in use, perhaps by a mia serve you started yourself. Stop that first")
+
+
 def install(port: int) -> Path:
     """Installs and starts the agent. Installing again replaces it, which stops any job it's running."""
     described = describe(port)  # first, so that nothing has changed if this can't work
+    _check_before_stopping(port)
     _unload()
     deadline = time.monotonic() + START_WAIT_SECONDS
     _wait_for_port(port, deadline)
@@ -150,6 +171,7 @@ def install(port: int) -> Path:
         plistlib.dump(described, file)
     partial.replace(target)
     _load(deadline)
+    _confirm_answering(port)
     return target
 
 
@@ -176,6 +198,7 @@ def start() -> None:
     deadline = time.monotonic() + START_WAIT_SECONDS
     _wait_for_port(port, deadline)
     _load(deadline)
+    _confirm_answering(port)
 
 
 def restart() -> None:
@@ -185,6 +208,7 @@ def restart() -> None:
     deadline = time.monotonic() + START_WAIT_SECONDS
     _wait_for_port(port, deadline)
     _load(deadline)
+    _confirm_answering(port)
 
 
 def uninstall() -> bool:
@@ -211,9 +235,14 @@ def _port_in_file() -> int | None:
     try:
         with plist_file().open("rb") as file:
             arguments = plistlib.load(file).get("ProgramArguments", [])
-    except (OSError, ValueError, plistlib.InvalidFileException):
+    except (OSError, ValueError, AttributeError, ExpatError):
         return None
-    return int(arguments[-1]) if arguments and str(arguments[-1]).isdigit() else None
+    return int(arguments[-1]) if isinstance(arguments, list) and arguments and str(arguments[-1]).isdigit() else None
+
+
+def installed_port() -> int | None:
+    """The port the service uses, if it's installed and its file can be read."""
+    return _port_in_file()
 
 
 def _pid() -> int | None:
@@ -234,6 +263,6 @@ def _running_version(port: int) -> str | None:
     try:
         with opener.open(f"http://127.0.0.1:{port}/v1/health", timeout=3) as answer:  # nosec B310
             found = json.load(answer).get("version")
-    except (OSError, ValueError, AttributeError, urllib.error.URLError):
+    except (OSError, ValueError, AttributeError, urllib.error.URLError, http.client.HTTPException):  # another program may be there
         return None
     return str(found) if found else None

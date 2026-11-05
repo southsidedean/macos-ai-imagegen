@@ -68,5 +68,10 @@ it's running, and the jobs waiting run when it's back.
 - **The log** is `logs/serve.log` in mia's folder, and `status` shows where. It holds problems and progress bars, never
   prompts or tokens. Above 10 MB it moves to `serve.log.1`, replacing the one before, so the two never take more than
   about 20 MB.
+- **What's been tested.** Installing, restarting, and bringing back a killed server have all run against real launchd.
+  Starting at login rests on launchd's documented behaviour, and staying awake on the power assertion mia holds, which has
+  been seen in place. Neither has been through a real restart, or a Mac reaching its idle sleep time during a job.
+- **If it doesn't answer,** `install`, `start`, and `restart` wait up to 30 seconds for it, then say so and where its log is.
+  launchd keeps trying in the meantime.
 - **Under the hood:** the service is one launchd agent, `local.mia.serve`, in `~/Library/LaunchAgents`. It starts `mia serve`,
   which looks after its worker. The file holds no token.

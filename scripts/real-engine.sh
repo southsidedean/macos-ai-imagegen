@@ -335,6 +335,24 @@ else
 fi
 if grep -aq "$prompt" "$MIA_HOME/logs/serve.log"; then fail "20b. the prompt is in the log"; else pass "20b. the prompt isn't in the log"; fi
 
+# Restarting while a job runs fails that job, and the service and the job waiting behind it carry on.
+running=$(call POST /v1/jobs "$body" | field id)
+waiting=$(call POST /v1/jobs '{"prompt": "a small test", "seed": 1, "width": 512, "height": 512, "steps": 2}' | field id)
+tries=0
+until [ "$(state_of "$running")" = "running" ] || [ "$tries" -gt 240 ]; do
+	tries=$((tries + 1))
+	sleep 0.5
+done
+if "$mia" service restart >/dev/null 2>"$work/restart.log"; then restarted=yes; else restarted=no; fi
+answering || true
+first=$(wait_until_finished "$running")
+second=$(wait_until_finished "$waiting")
+if [ "$restarted $first $second" = "yes failed done" ]; then
+	pass "20c. restarting mid-job failed that job, and the next one ran"
+else
+	fail "20c. restarting mid-job: restarted $restarted, jobs $first and $second: $(cut -c1-200 "$work/restart.log")"
+fi
+
 # HTTPS under launchd, trusting only mia's authority. It listens on the network for as long as this check takes, and asks
 # for a token like everything else. The name is made up, so curl is told where it is.
 https_port=$((port + 1))

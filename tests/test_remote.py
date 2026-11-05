@@ -27,7 +27,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from fastapi.testclient import TestClient
 from mcp import Client
 
-from mia import cli, doctor, mcp_server, paths, remote, server, tokens
+from mia import cli, doctor, mcp_server, paths, remote, server, service, tokens
 from mia.engine import MiaError
 
 NAME = "my-mac.lan"
@@ -224,6 +224,31 @@ def test_turning_off_keeps_the_authority() -> None:
     assert remote.load() is None and remote.state() is None
     remote.turn_on([NAME], [])
     assert remote.fingerprint() == before
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [
+        '{"names": [1], "addresses": [], "port": 8766}',
+        '{"names": "my-mac.lan", "addresses": [], "port": 8766}',
+        '{"names": [], "addresses": "192.168.1.20", "port": 8766}',
+        '{"names": [], "addresses": ["nonsense"], "port": 8766}',
+        '{"names": [], "addresses": [], "port": 70000}',
+        '{"names": [], "addresses": [], "port": "8766"}',
+        '{"names": []}',
+        "[]",
+    ],
+)
+def test_settings_of_the_wrong_shape_are_called_damaged(saved: str) -> None:
+    remote.turn_on([NAME], [])
+    (remote.authority_file().parent / "remote.json").write_text(saved)
+    with pytest.raises(MiaError, match="run mia remote on again"):
+        remote.load()
+
+
+def test_a_port_that_cant_be_says_so() -> None:
+    with pytest.raises(MiaError, match="isn't a port"):
+        server._bound("127.0.0.1", 70000)
 
 
 def test_a_damaged_settings_file_says_so(tmp_path: Path) -> None:
@@ -590,6 +615,196 @@ def test_a_renewed_certificate_is_used_without_a_restart(monkeypatch: pytest.Mon
     assert serial() != before and reloaded[0] is made
 
 
+def run_renewals(monkeypatch: pytest.MonkeyPatch, secure: server.Secure, then: Any, until: Any) -> None:
+    """Runs the renewal loop quickly, with `then` happening once it has started, until `until` holds."""
+    monkeypatch.setattr(server, "RENEW_CHECK_SECONDS", 0.01)
+
+    async def main() -> None:
+        task = asyncio.create_task(server.Server(server._config(server.create_app()), secure)._renew(secure))
+        await asyncio.sleep(0.02)
+        then()
+        for _ in range(500):
+            if until():
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        secure.listener.close()
+
+    asyncio.run(main())
+    assert until()
+
+
+def test_a_certificate_replaced_by_mia_remote_on_is_loaded_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+    made = remote.context()
+    reloaded: list[ssl.SSLContext] = []
+    real = remote.reload
+
+    def counted(context: ssl.SSLContext) -> None:
+        real(context)
+        reloaded.append(context)
+
+    checks: list[int] = []
+    real_renew = remote.renew
+
+    def renewing(chosen: remote.Settings) -> bool:
+        checks.append(1)
+        return real_renew(chosen)
+
+    monkeypatch.setattr(remote, "reload", counted)
+    monkeypatch.setattr(remote, "renew", renewing)
+
+    def replace_it() -> None:
+        remote.turn_on([NAME], [])
+        checks.clear()
+
+    run_renewals(monkeypatch, server.Secure(socket.socket(), made, settings), replace_it, lambda: len(checks) >= 5)
+    assert reloaded == [made]  # once: what's loaded is now what's in the file
+
+
+def test_a_reload_that_fails_is_tried_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+    made = remote.context()
+    tries: list[int] = []
+
+    def failing_once(_context: ssl.SSLContext) -> None:
+        tries.append(1)
+        if len(tries) == 1:
+            raise ssl.SSLError("not this time")
+
+    monkeypatch.setattr(remote, "reload", failing_once)
+    run_renewals(monkeypatch, server.Secure(socket.socket(), made, settings), lambda: remote.turn_on([NAME], []), lambda: len(tries) >= 2)
+
+
+def test_a_name_added_while_running_isnt_taken_away_by_a_renewal(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+    made = remote.context()
+    checks: list[int] = []
+    real = remote.renew
+
+    def counted(chosen: remote.Settings) -> bool:
+        checks.append(1)
+        return real(chosen)
+
+    monkeypatch.setattr(remote, "renew", counted)
+    run_renewals(monkeypatch, server.Secure(socket.socket(), made, settings), lambda: remote.turn_on([NAME, "my-mac.local"], []), lambda: len(checks) >= 5)
+    judge_real("my-mac.local")
+
+
+def test_an_unexpected_error_doesnt_end_renewing(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+    tries: list[int] = []
+
+    def strange(_settings: remote.Settings) -> bool:
+        tries.append(1)
+        raise TypeError("an encrypted key, say")
+
+    monkeypatch.setattr(remote, "renew", strange)
+    run_renewals(monkeypatch, server.Secure(socket.socket(), remote.context(), settings), lambda: None, lambda: len(tries) >= 2)
+
+
+def test_turning_it_off_stops_renewing(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+    calls: list[int] = []
+
+    def renewing(_settings: remote.Settings) -> bool:
+        calls.append(1)
+        return False
+
+    monkeypatch.setattr(remote, "renew", renewing)
+    made = remote.context()
+    remote.turn_off()
+    ticks: list[int] = []
+
+    def off() -> None:
+        ticks.append(1)
+
+    monkeypatch.setattr(remote, "load", off)
+    run_renewals(monkeypatch, server.Secure(socket.socket(), made, settings), lambda: None, lambda: len(ticks) >= 3)
+    assert calls == []
+
+
+def test_an_error_taking_a_connection_doesnt_end_accepting(running: Running, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = remote.nearby
+    faults = [ValueError("a strange address")]
+
+    def faulty(address: str) -> bool:
+        if faults:
+            raise faults.pop()
+        return real(address)
+
+    monkeypatch.setattr(remote, "nearby", faulty)
+    with connected(running.port) as first:
+        assert ended_by_server(first)
+    with secure_socket(running.port) as held:
+        assert ask(held)[0] == 200
+
+
+def test_a_connection_with_no_address_is_closed_and_accepting_carries_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+
+    async def main() -> None:
+        made = server.Server(server._config(server.create_app()), None)
+        one, other = socket.socketpair()
+        made._admit(one, None, server.Secure(socket.socket(), remote.context(), settings))
+        assert one.fileno() == -1 and not made._handshakes
+        other.close()
+
+    asyncio.run(main())
+
+
+def test_an_aborted_connection_doesnt_make_accepting_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+
+    async def main() -> float:
+        secure = server.Secure(socket.socket(), remote.context(), settings)
+        made = server.Server(server._config(server.create_app()), secure)
+        loop = asyncio.get_running_loop()
+        finished = asyncio.Event()
+        aborted = [ConnectionAbortedError() for _ in range(5)]
+
+        async def accepting(_listener: socket.socket) -> tuple[socket.socket, Any]:
+            if aborted:
+                raise aborted.pop()
+            finished.set()
+            await asyncio.sleep(30)
+            raise AssertionError
+
+        monkeypatch.setattr(loop, "sock_accept", accepting)
+        began = time.monotonic()
+        task = asyncio.create_task(made._accept(secure))
+        await asyncio.wait_for(finished.wait(), 10)
+        took = time.monotonic() - began
+        task.cancel()
+        secure.listener.close()
+        return took
+
+    assert asyncio.run(main()) < 1
+
+
+def stalled_tls(port: int, requests: int = 3000) -> socket.socket:
+    context = client_context()
+    raw = socket.socket()
+    raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    raw.connect(("127.0.0.1", port))
+    raw.settimeout(10)
+    held = context.wrap_socket(raw, server_hostname=NAME)
+    with contextlib.suppress(OSError, TimeoutError):
+        held.sendall(f"GET /openapi.json HTTP/1.1\r\nHost: {NAME}\r\n\r\n".encode() * requests)
+    return held
+
+
+def test_requests_that_are_never_read_dont_hold_an_https_connection_for_good(running: Running, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "ARRIVAL_SECONDS", 30.0)
+    monkeypatch.setattr(server, "WRITE_STALL_SECONDS", 0.5)
+    held = stalled_tls(running.port)
+    deadline = time.monotonic() + 10
+    while running.server.server_state.connections and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not running.server.server_state.connections, "the unread connection kept its slot"
+    held.close()
+
+
 def test_a_renewal_that_fails_is_logged_and_tried_again(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     settings = remote.turn_on([NAME], [])
     monkeypatch.setattr(server, "RENEW_CHECK_SECONDS", 0.01)
@@ -620,24 +835,111 @@ def test_a_renewal_that_fails_is_logged_and_tried_again(monkeypatch: pytest.Monk
 # Starting it.
 
 
-def test_with_remote_access_off_nothing_listens_beyond_this_mac() -> None:
+def test_with_remote_access_off_nothing_listens_beyond_this_mac(capsys: pytest.CaptureFixture[str]) -> None:
     assert server._secure(8765) is None
+    assert capsys.readouterr().err == ""
 
 
-def test_https_cant_share_the_plain_port() -> None:
+def test_https_cant_share_the_plain_port_and_this_mac_keeps_its_api(capsys: pytest.CaptureFixture[str]) -> None:
     remote.turn_on([NAME], [], port=8765)
-    with pytest.raises(MiaError, match="can't share port 8765"):
-        server._secure(8765)
+    assert server._secure(8765) is None
+    assert "can't share port 8765" in capsys.readouterr().err
 
 
-def test_a_taken_https_port_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_taken_https_port_says_so_and_this_mac_keeps_its_api(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(server, "ANYWHERE", "127.0.0.1")
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
         remote.turn_on([NAME], [], port=int(taken.getsockname()[1]))
-        with pytest.raises(MiaError, match="already in use"):
-            server._secure(8765)
+        assert server._secure(8765) is None
+    assert "already in use" in capsys.readouterr().err
+
+
+def free_https_port(monkeypatch: pytest.MonkeyPatch) -> int:
+    monkeypatch.setattr(server, "ANYWHERE", "127.0.0.1")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def damage(name: str, data: bytes = b"damaged") -> None:
+    (remote.authority_file().parent / name).write_bytes(data)
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"authority.pem": b"damaged", "certificate.pem": b"damaged"},
+        {"authority.key": b"damaged", "certificate.pem": b"damaged"},
+        {"remote.json": b"{"},
+        {"remote.json": b'{"names": [1], "addresses": [], "port": 8766}'},
+        {"remote.json": b'{"names": "my-mac.lan", "addresses": [], "port": 8766}'},
+        {"remote.json": b'{"names": [], "addresses": ["nonsense"], "port": 8766}'},
+        {"remote.json": b'{"names": [], "addresses": [], "port": 70000}'},
+    ],
+)
+def test_damaged_files_leave_this_macs_api_running_and_say_why(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], broken: dict[str, bytes]) -> None:
+    remote.turn_on([NAME], [], port=free_https_port(monkeypatch))
+    for name, data in broken.items():
+        damage(name, data)
+    capsys.readouterr()
+    assert server._secure(8765) is None
+    assert "HTTPS didn't start" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("broken", ["certificate.key", "certificate.pem"])
+def test_a_damaged_certificate_is_simply_made_again(monkeypatch: pytest.MonkeyPatch, broken: str) -> None:
+    remote.turn_on([NAME], [], port=free_https_port(monkeypatch))
+    damage(broken)
+    secure = server._secure(8765)
+    assert secure is not None
+    secure.listener.close()
+    judge_real(NAME)
+
+
+def test_a_key_from_another_certificate_is_noticed_and_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = remote.turn_on([NAME], [])
+    key = remote.certificate_file().with_name("certificate.key")
+    other = key.read_bytes()
+    remote.turn_on([NAME], [])
+    key.write_bytes(other)  # what a crash between writing the two files leaves
+    assert remote.renew(settings) is True
+    judge_real(NAME)
+
+
+@pytest.mark.parametrize("broken", ["authority.pem", "authority.key"])
+def test_a_damaged_authority_says_what_to_do_and_new_authority_repairs_it(capsys: pytest.CaptureFixture[str], broken: str) -> None:
+    remote.turn_on([NAME], [])
+    damage(broken)
+    assert cli.main(["remote", "on", "--name", NAME]) == 1
+    assert "--new-authority" in capsys.readouterr().err
+    assert cli.main(["remote", "on", "--name", NAME, "--new-authority"]) == 0
+    judge_real(NAME)
+
+
+def test_doctor_says_when_remote_access_is_on_but_not_listening() -> None:
+    settings = remote.Settings((NAME,), ())
+    later = datetime.now(UTC) + timedelta(days=9)
+    finding = remote_finding(remote.State(settings, later, listening=False))
+    assert finding.status == doctor.WARN and "not listening" in finding.detail
+
+
+def test_running_on_again_keeps_the_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert cli.main(["remote", "on", "--name", NAME, "--port", "18999"]) == 0
+    assert cli.main(["remote", "on", "--name", NAME]) == 0
+    saved = remote.load()
+    assert saved is not None and saved.port == 18999
+    assert cli.main(["remote", "on", "--name", NAME, "--port", "19000"]) == 0
+    saved = remote.load()
+    assert saved is not None and saved.port == 19000
+
+
+def test_on_refuses_the_port_the_service_uses(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(service, "installed_port", lambda: 18999)
+    assert cli.main(["remote", "on", "--name", NAME, "--port", "18999"]) == 1
+    assert "already uses port 18999" in capsys.readouterr().err
+    assert remote.load() is None
 
 
 def test_starting_up_replaces_a_missing_certificate(monkeypatch: pytest.MonkeyPatch) -> None:

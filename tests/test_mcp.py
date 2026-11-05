@@ -352,7 +352,7 @@ def test_addresses_mia_mcp_accepts(url: str) -> None:
     ],
 )
 def test_addresses_mia_mcp_refuses(url: str) -> None:
-    with pytest.raises(MiaError, match="MIA_URL"):
+    with pytest.raises(MiaError, match="mia's address"):
         mcp_server.check_url(url)
 
 
@@ -415,3 +415,45 @@ def test_a_tool_called_at_mcp_acts_with_that_callers_token() -> None:
     assert found is not None
     maker_device = next(d for d in tokens.devices() if d.name == "maker")
     assert found.token == maker_device.id
+
+
+@pytest.mark.parametrize("url", ["http://[x", "http://localhost:abc", "https://my-mac.local:99999", "http://local\thost"])
+def test_a_malformed_address_is_a_message_and_not_a_traceback(url: str) -> None:
+    with pytest.raises(MiaError, match="mia's address"):
+        mcp_server.bridge(url, "mia_x")
+
+
+def test_the_mcp_stream_nobody_uses_is_refused_and_needs_a_token() -> None:
+    with TestClient(server.create_app(), base_url=BASE) as api:
+        assert api.get("/mcp").status_code == 401
+        answer = api.get("/mcp", headers={"Authorization": f"Bearer {tokens.create('reader', tokens.READ)}", "Accept": "text/event-stream"})
+        assert answer.status_code == 405 and answer.headers["allow"] == "POST"
+
+
+def test_bad_tokens_from_one_address_dont_stop_another_devices_tools() -> None:
+    app = server.create_app()
+    good = {"Authorization": f"Bearer {tokens.create('laptop')}", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-06-18"}
+    call_status = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "mia_status", "arguments": {}}}
+    laptop = TestClient(app, base_url=BASE, client=("192.0.2.1", 1))
+    with TestClient(app, base_url=BASE, client=("127.0.0.1", 9)) as here:
+        for _ in range(server.REFUSED_SIGN_INS_PER_MINUTE):
+            assert here.get("/v1/status", headers={"Authorization": "Bearer nope"}).status_code == 401
+        assert here.get("/v1/status", headers={"Authorization": "Bearer nope"}).status_code == 429
+        result = laptop.post("/mcp", json=call_status, headers=good).json()["result"]
+        assert not result.get("isError"), result
+
+
+def test_a_revoked_token_mid_call_cant_use_up_the_refusals_of_other_devices() -> None:
+    limiter = server.Limiter()
+    guard = server.Guard(lambda *_args: None, limiter)  # type: ignore[arg-type]
+    scope = {"client": (server.WITHIN, 0)}
+    for _ in range(server.REFUSED_SIGN_INS_PER_MINUTE + 1):
+        refusal = asyncio.run(guard._sign_in(scope, [("authorization", "Bearer nope")]))
+        assert refusal is not None and refusal.status_code == 401
+
+
+@pytest.mark.parametrize("key", ["caf\u00e9", "with space", "\U0001f98a", "a\r\nb"])
+def test_an_idempotency_key_that_cant_be_a_header_is_refused_with_a_reason(key: str) -> None:
+    result = call(tokens.GENERATE, "mia_generate", prompt="a fox", idempotency_key=key)
+    assert result.is_error and "idempotency_key" in error(result)
+    assert jobs.counts()[jobs.QUEUED] == 0

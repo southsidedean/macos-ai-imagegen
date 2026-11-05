@@ -85,8 +85,8 @@ Finished jobs are forgotten after 30 days. Their images stay until you delete th
 | `DELETE /v1/jobs/{id}` | generate | Stops a job |
 | `GET /v1/images` | read | History, newest first. Takes `search`, `limit`, and `offset` |
 | `GET /v1/images/{id}` | read | An image's prompt and settings |
-| `GET /v1/images/{id}/file` | read | The PNG |
-| `GET /v1/images/{id}/preview` | read | A JPEG up to 512 pixels on its longest side. An image from before 0.4 has none, and gets a 404 |
+| `GET /v1/images/{id}/file` | read | The PNG. One saved elsewhere with `mia generate --output` gets a 404 |
+| `GET /v1/images/{id}/preview` | read | A JPEG up to 512 pixels on its longest side. An image from before 0.4, or one saved elsewhere with `mia generate --output`, has none, and gets a 404 |
 | `DELETE /v1/images/{id}` | admin | Permanently deletes an image's record, the job that made it, and its file. A file saved elsewhere with `mia generate --output` stays where it is |
 | `GET /v1/models` | read | The models mia knows, and which are downloaded |
 
@@ -126,12 +126,13 @@ Tokens go only in the `Authorization` header, never in a URL, where they would e
 | Open event streams | 8 per device, 32 in all | 429, with `Retry-After` |
 | A request's size | 64 KB | 413, or 411 with no `Content-Length` |
 | Time for a whole request to arrive | 15 seconds | The connection is closed |
+| An answer left unread, with the buffers behind it full | 30 seconds | The connection is closed |
 | Open connections | 64 from one address, 256 in all | A new connection is closed |
 | Free disk needed to accept a job | 2 GB | 507 |
 
 A model that isn't downloaded yet gets a 409, with the command that downloads it. A request that can't be
-understood gets a 422 saying which field and why, without repeating what you sent. Any path but `/v1/health` and
-`/openapi.json` gets a 401 without a token, even one that doesn't exist.
+understood gets a 422 saying which field and why, without repeating your prompt. Anything but `GET /v1/health` and
+`GET` or `HEAD /openapi.json` gets a 401 without a token, even a path that doesn't exist.
 
 A job has no limit on how long it takes, as long as it keeps moving. If its `step` doesn't change for 30 minutes,
 mia restarts the worker and marks the job failed, and the next job runs. Time the Mac spends asleep doesn't count.
