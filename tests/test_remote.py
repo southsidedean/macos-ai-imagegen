@@ -661,7 +661,7 @@ def test_on_uses_the_macs_own_name_and_address_when_given_none(monkeypatch: pyte
     monkeypatch.setattr(remote, "suggested_addresses", lambda: [ADDRESS])
     assert cli.main(["remote", "on"]) == 0
     printed = [line.strip() for line in capsys.readouterr().out.splitlines()]
-    assert "https://my-mac.local:8766" in printed and f"https://{ADDRESS}:8766" in printed
+    assert printed[1:3] == ["https://my-mac.local:8766", f"https://{ADDRESS}:8766"]
     assert remote.fingerprint() in printed
 
 
