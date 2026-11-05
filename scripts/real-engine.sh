@@ -6,7 +6,7 @@
 # It uses the real models folder (or MIA_MODELS), and downloads the default model if it's missing, about
 # 4.6 GB. Images, history, and the test's own server go in a throwaway folder and on a spare port, so your
 # own history and any mia serve you have running are left alone, though it can't share the GPU with one.
-# It takes about five minutes. Every line it prints is safe to paste into a pull request: it shows no paths.
+# It also installs and removes a real launchd agent, under a label of its own. It takes about seven minutes. Every line it prints is safe to paste into a pull request: it shows no paths.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -28,10 +28,14 @@ mia=.venv/bin/mia
 
 work=$(mktemp -d)
 server=""
+agent=""
 cleanup() {
 	if [ -n "$server" ]; then
 		kill -TERM "$server" 2>/dev/null || true
 		wait "$server" 2>/dev/null || true
+	fi
+	if [ -n "$agent" ]; then
+		"$mia" service uninstall >/dev/null 2>&1 || true
 	fi
 	rm -rf "$work"
 }
@@ -217,6 +221,71 @@ if [ "$result" = "done" ]; then pass "12. a new server ran the job left in the q
 kill -TERM "$server"
 wait "$server" 2>/dev/null || true
 server=""
+
+# The real launchd agent, under a label of its own, so one you've installed is left alone.
+export MIA_SERVICE_LABEL=local.mia.real-engine-test
+agent_file="$HOME/Library/LaunchAgents/$MIA_SERVICE_LABEL.plist"
+answering() {
+	tries=0
+	until curl -fsS "$base/v1/health" >/dev/null 2>&1; do
+		tries=$((tries + 1))
+		if [ "$tries" -gt 90 ]; then return 1; fi
+		sleep 0.5
+	done
+}
+agent=yes
+"$mia" service install --port "$port" >/dev/null
+if answering; then pass "13. launchd started the service"; else fail "13. the service didn't start"; fi
+
+# A job in that agent gives the same pixels, which proves it has the GPU, and it keeps the Mac awake only for the job.
+job=$(call POST /v1/jobs "$body" | field id)
+tries=0
+until [ "$(state_of "$job")" = "running" ] || [ "$tries" -gt 240 ]; do
+	tries=$((tries + 1))
+	sleep 0.5
+done
+held=no
+if pmset -g assertions | grep -q 'caffeinate'; then held=yes; fi
+result=$(wait_until_finished "$job")
+pixels=$(call GET "/v1/images/$(call GET "/v1/jobs/$job" | field image)" | field pixels)
+case "$result $pixels" in
+"done $expected"*) pass "14. a job under launchd gave the known pixels" ;;
+*) fail "14. a job under launchd: $result, pixels $(printf '%s' "$pixels" | cut -c1-12)" ;;
+esac
+sleep 1
+if [ "$held" = yes ] && ! pgrep -f "caffeinate -i -w $(cat "$MIA_HOME/gpu.lock")" >/dev/null; then
+	pass "15. the Mac was kept awake during the job, and not after it"
+else
+	fail "15. keeping the Mac awake: held during the job: $held"
+fi
+
+# launchd brings back a server that dies, whose worker then picks up the queue.
+before=$("$mia" service status | sed -n 's/.*process \([0-9]*\).*/\1/p')
+kill -KILL "$before"
+sleep 1
+tries=0
+now=""
+until { now=$("$mia" service status | sed -n 's/.*process \([0-9]*\), answering/\1/p') && [ -n "$now" ] && [ "$now" != "$before" ]; } || [ "$tries" -gt 60 ]; do
+	tries=$((tries + 1))
+	sleep 0.5
+	now=""
+done
+job=$(call POST /v1/jobs "$body" | field id)
+result=$(wait_until_finished "$job")
+if [ -n "$now" ] && [ "$result" = "done" ]; then
+	pass "16. launchd brought back a killed server, and it ran a job"
+else
+	fail "16. after killing the server: process '$now', job $result"
+fi
+
+"$mia" service uninstall >/dev/null
+agent=""
+sleep 1
+if [ ! -e "$agent_file" ] && ! curl -fsS "$base/v1/health" >/dev/null 2>&1 && ! pgrep -f "mia serve --port $port" >/dev/null; then
+	pass "17. uninstalling stopped it and left nothing behind"
+else
+	fail "17. something is left after uninstalling"
+fi
 
 if [ "$failures" -gt 0 ]; then
 	echo "$failures check(s) failed."

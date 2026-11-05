@@ -46,6 +46,7 @@ took about 30 seconds on our test Mac. `uv run mia --help` lists the rest.
 
 - [docs/api.md](docs/api.md): the REST API, with examples
 - [docs/mcp.md](docs/mcp.md): connecting an AI assistant
+- [docs/service.md](docs/service.md): keeping mia running
 - [docs/roadmap.md](docs/roadmap.md): what's done, and what's next
 - [PLAN.md](PLAN.md): every decision, and the test results behind them
 - [SECURITY.md](SECURITY.md): how to report a problem

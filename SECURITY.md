@@ -38,6 +38,7 @@ Working today, and tested:
 - Deleting an image also deletes the job that made it. Finished jobs, which hold prompts, are forgotten after 30
   days.
 - The API can read or delete image files only in mia's own images folder.
+- The launchd service runs as you, listens only on this Mac, keeps its log private, and its file holds no token.
 - The API process doesn't load the image engine, so a crash there can't take it down.
 - MCP tools are calls to the API with the assistant's own token, so its checks apply to them too. No tool can delete an
   image or change the models, and `mia mcp` won't send a token over plain HTTP to another machine.

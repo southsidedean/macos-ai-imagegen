@@ -138,7 +138,8 @@ mia restarts the worker and marks the job failed, and the next job runs. Time th
 
 ## Good to know
 
-While the server is running, its worker holds the GPU, so `mia generate` refuses to run. Send the job through
+To keep the server running without a window open, see [Keeping mia running](service.md). While it's running, its worker
+holds the GPU, so `mia generate` refuses to run. Send the job through
 the API instead, or stop the server first.
 
 Stopping the server fails the job it's running and keeps the ones waiting, which run when it starts again.
