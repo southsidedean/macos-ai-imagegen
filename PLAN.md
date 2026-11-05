@@ -40,7 +40,7 @@ direct way to use whichever open model you find on Hugging Face.
 |---|---|
 | Name | **mia**, short for macos-ai-imagegen, the way kia is short for kodi-iptv-assistant. It's the name in the docs, on the pages, and on the command. The repository keeps its name. |
 | Where it runs | Natively on one Apple Silicon Mac, as your user. Not in a container: Docker on macOS runs a Linux VM with no Metal access, so a container would run on the CPU. |
-| Default engine | **mflux**, a native MLX implementation. It runs FLUX and takes Hugging Face repositories and LoRAs directly. It's pinned to an exact version and used only behind mia's engine interface, because its flags and classes change between releases. |
+| Default engine | **mflux**, a native MLX implementation. It runs FLUX and takes Hugging Face repositories and LoRAs directly. It moves quickly, with a release most weeks, so Renovate's monthly update is how mia keeps up. It's pinned to an exact version and used only behind mia's engine interface, because its flags and classes change between releases. |
 | Second engine | **diffusers** on PyTorch's MPS backend, from 0.6, for open models mflux doesn't implement (Stable Diffusion 1.5 and SDXL families, for example). It's an optional extra. mflux itself requires PyTorch today, so the extra adds diffusers, not PyTorch. |
 | ComfyUI and Draw Things | Not engines for 1.0. ComfyUI's graph workflows are far more than this needs, and it runs on MPS rather than MLX. Draw Things has its own server and model library, which would put a second model store beside mia's. Either could become an engine later, if a real need appears. |
 | Default models (decided 2026-11-04) | FLUX first; see [Models](#models). A fresh install offers a choice and downloads nothing until you pick. The default is FLUX.2 klein 4B, Apache 2.0 licensed. FLUX.1 schnell stays in the catalog, and FLUX.1 dev is in the catalog as an opt-in for personal use, with its non-commercial license shown. |
@@ -48,9 +48,9 @@ direct way to use whichever open model you find on Hugging Face.
 | Web framework | FastAPI, so the API's OpenAPI document and its validation come from one set of types. kia and ok3d use only the standard library, but mia can't, since its engines need large dependencies anyway. Direct dependencies stay few, and each needs a reason. |
 | MCP library | The official Python SDK, in the same server process as the API, rather than a handwritten server like kia's. The 2026-07-28 revision changed the protocol's core (it's now stateless), and the SDK should carry that kind of change for us. Version 2 of the SDK, with its `MCPServer` API, is the one to use; it answers both `2026-07-28` clients and older ones. |
 | Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. The worker keeps a model loaded between jobs, with MLX's cache capped at 2 GB, which was both the fastest and the steadiest way to run. Cancel takes effect at the next step, and a job that won't stop is killed along with the worker, which then restarts. |
-| Queue and history | One SQLite database, with images as PNG files beside it. One job runs at a time, because one model already uses most of the Mac's memory. Queued jobs survive a restart. A job that was running when the worker died is marked failed, with the reason, and isn't retried on its own. |
+| Queue and history | One SQLite database, with images as PNG files beside it. History arrives in 0.2 and the queue in 0.3. One job runs at a time, because one model already uses most of the Mac's memory. Queued jobs survive a restart. A job that was running when the worker died is marked failed, with the reason, and isn't retried on its own. |
 | Asynchronous by default | Submitting a request returns a job right away. Generation can take minutes, longer than HTTP and MCP clients usually wait, so a client submits, then polls, streams progress, or asks to wait a limited time. |
-| Reproducible | Each image records its prompt, seed, size, steps, engine version, and model revision. Hugging Face models are pinned to a commit, so "make it again" means the same weights. |
+| Reproducible | Each image records its prompt, seed, size, steps, engine and MLX versions, and model revision. Hugging Face models are pinned to a commit, so "make it again" means the same weights. |
 | Sleep | The worker holds a macOS power assertion (as `caffeinate -i` does) only while a job runs, so a remote request isn't cut off by idle sleep and the Mac can still sleep when idle. Waking a sleeping Mac for a request is out of scope. |
 | Service | Two launchd user agents, installed by `mia service install`. A user agent means someone must be logged in; the docs say so, and cover automatic login for a Mac used as a server. |
 | Where things live | `~/Library/Application Support/mia/` by default (`MIA_HOME` moves it). The models folder has a setting of its own, so models can live on an external drive. Settings are in `settings.toml`, and the repository carries a commented `settings.example.toml`. |
@@ -253,11 +253,11 @@ Workflows, adapted from ok3d and kia:
     check;
   - `pytest` on Linux (oldest supported Python and the newest the lockfile allows), using the fake
     engine;
-  - `pytest (macOS)` on Apple Silicon;
+  - `pytest (macOS)` on Apple Silicon, with the real engine's packages installed and checked for fit;
   - `uv lock --check` and a dependency vulnerability scan (pip-audit);
   - joining in the releases that bring what they check: launchd plist generation and install scripts
-    and an import of the real engine packages on macOS (0.2 and 0.4), and a smoke test that starts the
-    service with the fake engine and walks a job through the API and MCP (0.3 and 0.4).
+    (0.4), and a smoke test that starts the service with the fake engine and walks a job through the
+    API and MCP (0.3 and 0.4).
 - `codeql.yml`, `dependency-review.yml`, and `scorecard.yml`, as in ok3d.
 - `release.yml`, added with the first release: on a signed tag, builds the package, attests it, and
   attaches an SBOM.
@@ -313,14 +313,22 @@ Each answer goes back in this plan, and any that overturns a decision is called 
 
 ### Spike results so far
 
-Measured on 2026-11-04 with mflux 0.18.1.
+Measured on 2026-11-04. **mia ships mflux 0.24.0, mlx 0.32.4, and Pillow 13.0.0.** Most of these tests
+ran on mflux 0.18.1 and an older mlx, and were then repeated where the answer could have changed: the
+results below say which. mia's first pin was six releases behind, because the Python test below forced a
+generic Mac platform and picked old versions, and nothing checked what was actually newest.
 
-- Python (question 1): mflux installs on Python 3.12 and 3.13, not 3.14 or 3.15. It requires
-  `mlx<0.32`, and the versions that resolve for 3.14 and 3.15 are newer. mia's `requires-python`
-  and CI's Python jobs narrow to match when the engine arrives in 0.2.
-- mflux (question 2, in part): it's MIT licensed. Its `pillow>=12.1.1` allows Pillow 13.0.0, which
-  fails on import under Python 3.13, so a fresh install crashes. Pillow 12.3.0 works, and mia's
-  lockfile pins it until that's fixed. Keeping a model loaded across jobs is still to be tried.
+On the shipped versions, through mia's own engine (FLUX.2 klein 4B at 4-bit, 1024 by 1024, 4 steps):
+about 29 seconds, and a peak memory footprint of 7.6 GB, down from about 24 GB. mflux 0.24 decodes in
+strips, which it says takes about 1.6 GB instead of 7 to 14. FLUX.1 schnell took 54 seconds, with a 20
+GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as before.
+
+- Python (question 1): the engine installs on Python 3.12 to 3.14, and real generation gave identical
+  pixels on 3.13 and 3.14. It doesn't install on 3.15, because sentencepiece has no wheels for it yet.
+  mlx needs macOS 14 or newer. An earlier version of this plan said 3.12 and 3.13 only, which was wrong.
+- mflux (question 2, in part): it's MIT licensed. mflux 0.18 crashed on Pillow 13, and holding Pillow
+  back to avoid that left 39 known vulnerabilities, which `pip-audit` rightly refused. mflux 0.24
+  requires Pillow 13 and fixes the crash, so neither a hold nor a workaround is needed.
 - Speed (question 3, in part): FLUX.1 schnell at 4-bit, 1024 by 1024, 4 steps took 95 to 116 seconds
   on a test Mac, of which 52 to 62 were the denoising steps. Its peak memory footprint was about
   25.7 GB. That footprint may count memory-mapped weights, so it isn't yet a minimum memory figure.
@@ -328,7 +336,13 @@ Measured on 2026-11-04 with mflux 0.18.1.
 - Gating (question 5): `black-forest-labs/FLUX.1-schnell` and FLUX.1 dev are gated, while
   `FLUX.2-klein-4B` and the `mflux-community` copies aren't. No account or token is needed to start.
 - Reproducibility: the same seed, model, and settings gave identical pixels across runs. The files
-  differ because of the metadata mflux adds, so mia compares pixels, not file hashes.
+  differ because of the metadata mflux adds, so mia compares pixels, not file hashes. Versions count too:
+  mlx 0.29.3 and 0.31.2 gave visibly the same fox with different pixels, whichever code called them, and
+  so did mflux 0.24. So mia pins MLX on its own, records both versions with each image, and a test fails
+  if a pin moves without a new expected value in `scripts/real-engine.sh`.
+- Older versions: the tables below were measured on mflux 0.18.1 and mlx 0.29.3, so their absolute
+  numbers are out of date. The comparisons between models and between ways of running stand, but the
+  default cache hasn't been compared with the capped one on the shipped versions.
 - Default model (decided 2026-11-04): FLUX.2 klein 4B. mflux's docs say FLUX.1 gets maintenance fixes
   only and may be deprecated. With warm caches, both at 4-bit, 1024 by 1024, 4 steps:
 
@@ -384,7 +398,7 @@ Still open: real MCP clients, FLUX.1 dev, and cancel timing with the cache cappe
 
 | Risk | What we do about it |
 |---|---|
-| A dependency update breaks a fresh install, as Pillow 13 did | Lockfile with hashes, and no unpinned install path in the docs |
+| A dependency update breaks a fresh install, as Pillow 13 did on mflux 0.18 | Lockfile with hashes, no unpinned install path in the docs, and `pip-audit` in CI so a hold can't hide known vulnerabilities |
 | mflux changes quickly, or stalls | Exact pin and one adapter; diffusers is a working alternative for FLUX |
 | Memory pressure | Quantized defaults, MLX's cache capped, a memory check before loading, worker restarted when the model changes |
 | Disk fills up | Refused before download, sizes shown first, external models folder |

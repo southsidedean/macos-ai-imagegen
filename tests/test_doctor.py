@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mia import __version__, cli, doctor
+from mia import __version__, cli, doctor, paths
 
 READY = doctor.Facts(
     system="Darwin",
@@ -38,7 +38,7 @@ def test_only_an_apple_silicon_mac_passes(system: str, machine: str) -> None:
 
 @pytest.mark.parametrize(
     ("python", "expected"),
-    [((3, 12), doctor.PASS), ((3, 13), doctor.PASS), ((3, 14), doctor.WARN), ((3, 15), doctor.WARN), ((3, 11), doctor.WARN)],
+    [((3, 12), doctor.PASS), ((3, 13), doctor.PASS), ((3, 14), doctor.PASS), ((3, 15), doctor.WARN), ((3, 11), doctor.WARN)],
 )
 def test_python_versions_follow_the_engine(python: tuple[int, int], expected: str) -> None:
     assert status(replace(READY, python=python), "Python") == expected
@@ -65,7 +65,8 @@ def test_a_missing_engine_is_not_a_problem_yet() -> None:
 
 def test_mia_home_moves_the_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MIA_HOME", str(tmp_path / "elsewhere"))
-    assert doctor.home_folder() == tmp_path / "elsewhere"
+    assert paths.home_folder() == tmp_path / "elsewhere"
+    assert doctor.gather().folder == tmp_path / "elsewhere"
 
 
 def test_models_are_counted_and_nothing_is_made(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

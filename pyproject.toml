@@ -10,12 +10,22 @@ name = "mia"
 dynamic = ["version"]
 description = "A macOS stack for generating AI images with open models, through a web page, an API, and MCP."
 license = "AGPL-3.0-only"
-requires-python = ">=3.12"
+# The engine doesn't install on Python 3.15 yet: mflux needs sentencepiece, which has no wheels for it.
+requires-python = ">=3.12,<3.15"
 
 [project.scripts]
 mia = "mia.cli:main"
 
 [project.optional-dependencies]
+# The real engine, kept out of the base install because it brings PyTorch. Apple Silicon only.
+engine = [
+    "mflux==0.24.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Pinned on its own because it decides the pixels: another version gives a slightly different
+    # image from the same seed, so moving it means a new expected value in scripts/real-engine.sh.
+    "mlx==0.32.4 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # 13.0.0 fixes 39 known vulnerabilities, and mflux requires it.
+    "pillow==13.0.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
@@ -26,6 +36,10 @@ dev = [
     "zizmor==1.31.1",
     "pip-audit==2.10.1",
 ]
+
+[tool.uv]
+# The Mac mia runs on, and Linux for CI's tests. Nothing else needs a resolution.
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'", "sys_platform == 'linux'"]
 
 [tool.setuptools.dynamic]
 version = { attr = "mia.__version__" }
@@ -67,3 +81,9 @@ skips = ["B404", "B603", "B607"]
 strict = true
 python_version = "3.12"
 files = ["src", "tests"]
+
+# The engine's packages may or may not be installed, and have no types either way.
+[[tool.mypy.overrides]]
+module = ["mflux.*", "mlx.*", "PIL.*", "huggingface_hub.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

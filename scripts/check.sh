@@ -30,7 +30,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # 1. The lockfile matches pyproject.toml, and the environment matches the lockfile.
-if uv lock --check -q && uv sync --locked --extra dev -q; then
+if uv lock --check -q && uv sync --locked --extra dev --extra engine -q; then
 	pass "1. uv.lock is current"
 else
 	fail "1. uv.lock (above); uv lock updates it"

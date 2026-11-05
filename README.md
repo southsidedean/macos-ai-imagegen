@@ -11,8 +11,8 @@ AI images on your own Mac: mia runs open models such as FLUX natively on Apple S
 requests from a web page, a REST API, an MCP server, or the command line. An AI assistant or a
 script on another machine on your network can ask for a picture the same way you can at the Mac.
 
-**mia can't generate images yet.** It's early: the design is tested and written down, and the first
-working version comes in 0.2. [docs/roadmap.md](docs/roadmap.md) says where it stands.
+**It's early:** so far mia makes images from the command line, on the Mac itself. The queue, API, MCP
+server, and web page are still to come. [docs/roadmap.md](docs/roadmap.md) says where it stands.
 
 ## What it will do
 
@@ -25,15 +25,21 @@ working version comes in 0.2. [docs/roadmap.md](docs/roadmap.md) says where it s
 
 ## What you can try today
 
-`mia doctor` says whether a Mac is ready for mia. It only reads, and it needs no model. You need
-[uv](https://docs.astral.sh/uv/):
+You need an Apple Silicon Mac on macOS 14 or newer, and [uv](https://docs.astral.sh/uv/). The first
+command installs the image engine, which takes a few GB with PyTorch. `mia models pull` then shows the
+default model's license and asks before downloading it, about 4.6 GB.
 
 ```sh
 git clone https://github.com/southsidedean/macos-ai-imagegen.git
 cd macos-ai-imagegen
-uv sync --locked
+uv sync --locked --extra engine
 uv run mia doctor
+uv run mia models pull
+uv run mia generate "a red fox in a snowy forest at sunrise, photograph"
 ```
+
+It prints where it saved the image, in `~/Library/Application Support/mia/images`. A 1024 by 1024 image
+took about 30 seconds on our test Mac. `uv run mia --help` lists the rest.
 
 ## Learn more
 

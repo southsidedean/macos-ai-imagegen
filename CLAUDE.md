@@ -9,8 +9,8 @@ repository.
 models, FLUX first, through a web page, a REST API, an MCP server, and a command.
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
-before starting work, and update it in the same pull request when a decision changes. mia can't
-generate images yet: only `mia doctor` exists, and 0.2 brings the engine. `docs/roadmap.md` is the
+before starting work, and update it in the same pull request when a decision changes. 0.2 is in
+progress, and makes images from the command line. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
@@ -39,15 +39,15 @@ This is the design from `PLAN.md`; these parts arrive release by release.
 
 ```sh
 brew install uv shellcheck actionlint  # once: the tools the checks use
-uv sync --locked --extra dev           # set up the environment from the lockfile
+uv sync --locked --extra dev --extra engine  # set up from the lockfile; engine brings PyTorch
 git config core.hooksPath .githooks    # once: the git hooks
 scripts/check.sh                       # everything CI runs; the pre-push hook runs it too
 uv run pytest -k name                  # tests by name
+scripts/real-engine.sh                 # real generation, by hand, on Apple Silicon only
 uv run mia doctor                      # is this machine ready? changes nothing
+uv run mia models pull                 # download the default model
+uv run mia generate "a red fox"        # MIA_ENGINE=fake needs no model or ML packages
 ```
-
-Still to come, with the release that brings it: `scripts/real-engine.sh` (real generation, by hand,
-on Apple Silicon only).
 
 - Don't run `ruff format`: as in the other repositories, ruff only lints.
 - CI never runs a real model and there's no self-hosted runner. When a change touches an engine, run
@@ -60,7 +60,9 @@ on Apple Silicon only).
 ## Rules for code
 
 - Keep direct dependencies few, and give each a reason. Runtime dependencies come from the lockfile.
-- Pin Hugging Face models to a commit, and engines to an exact version.
+- Pin Hugging Face models to a commit, and engines and MLX to exact versions. MLX decides the pixels:
+  moving it means looking at a new image and updating `scripts/real-engine.sh`.
+- `.home` in code reads as a host name to `tests/test_privacy.py`: say `.folder`.
 - Weights are safetensors only. Never add `trust_remote_code`, custom pipelines, or a way to load
   pickle files, not even behind a setting.
 - Only the model manager downloads. A generation job must never start a download.
