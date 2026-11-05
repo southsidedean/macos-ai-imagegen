@@ -15,17 +15,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from mia import __version__
+from mia import __version__, paths
 
 GB = 1024**3
-# Versions mflux 0.18.1 installs on: it needs mlx<0.32, which has no wheels for newer Pythons.
-PYTHONS = ((3, 12), (3, 13))
+# What the engine installs on: mflux needs sentencepiece, which has no wheels for Python 3.15 yet.
+PYTHONS = ((3, 12), (3, 13), (3, 14))
 # FLUX.2 klein 4B at 4-bit needs 4.6 GB to download. Below this, even the default can't fit.
 DISK_NEEDED_GB = 6
 # Room for the default model plus another, and for the images they make.
 DISK_COMFORTABLE_GB = 30
-# Klein 4B peaked at about 14 GB in active use at 1024 by 1024. The true minimum hasn't been
-# measured, so this only warns.
+# Klein 4B's whole process peaked at about 8 GB at 1024 by 1024. The true minimum hasn't been measured
+# on a smaller Mac, so this only warns.
 MEMORY_COMFORTABLE_GB = 16
 ENGINES = ("mflux", "mlx")
 
@@ -49,14 +49,6 @@ class Finding:
     status: str
     name: str
     detail: str
-
-
-def home_folder() -> Path:
-    """Where mia keeps its data: MIA_HOME, or the usual macOS place."""
-    chosen = os.environ.get("MIA_HOME")
-    if chosen:
-        return Path(chosen).expanduser()
-    return Path.home() / "Library" / "Application Support" / "mia"
 
 
 def _memory_gb() -> float | None:
@@ -85,7 +77,7 @@ def _count_models(models: Path) -> int:
 
 
 def gather() -> Facts:
-    home = home_folder()
+    home = paths.home_folder()
     return Facts(
         system=platform.system(),
         machine=platform.machine(),
@@ -94,7 +86,7 @@ def gather() -> Facts:
         folder=home,
         disk_free_gb=_disk_free_gb(home),
         engines={name: importlib.util.find_spec(name) is not None for name in ENGINES},
-        models=_count_models(home / "models"),
+        models=_count_models(paths.models_folder()),
     )
 
 
@@ -117,7 +109,7 @@ def _memory(facts: Facts) -> Finding:
         return Finding(WARN, "Memory", "couldn't read how much this machine has")
     size = f"{facts.memory_gb:.0f} GB"
     if facts.memory_gb < MEMORY_COMFORTABLE_GB:
-        return Finding(WARN, "Memory", f"{size}; a 1024 by 1024 image used about 14 GB in testing")
+        return Finding(WARN, "Memory", f"{size}; a 1024 by 1024 image used about 8 GB in testing, with more for other models")
     return Finding(PASS, "Memory", size)
 
 
@@ -135,7 +127,7 @@ def _disk(facts: Facts) -> Finding:
 def _engines(facts: Facts) -> Finding:
     missing = [name for name, found in facts.engines.items() if not found]
     if missing:
-        return Finding(INFO, "Image engine", f"not installed ({', '.join(missing)}); it arrives in mia 0.2")
+        return Finding(INFO, "Image engine", f"not installed ({', '.join(missing)}); run uv sync --extra engine")
     return Finding(PASS, "Image engine", "installed")
 
 

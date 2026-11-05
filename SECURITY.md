@@ -16,16 +16,18 @@ mia has no release yet. Until 1.0, only the newest release gets fixes.
 
 ## How it's meant to work
 
-mia can't generate images yet, so most of this is the design in [PLAN.md](PLAN.md#security), not
-working code. Each point gets built and tested in the release that needs it.
+Working today, and tested:
+
+- Model files can't run code: mia downloads safetensors weights and text files only, never code, and
+  refuses a repository with no safetensors weights, with no override.
+- Only `mia models pull` downloads. Making an image runs offline.
+- Images are saved with no metadata, because the image engine would otherwise write your prompt and home
+  folder into every one. Prompts are kept in mia's own history file, and stay out of its output.
+- mia's folder and history file are readable only by you.
+
+Still to come, because there's no server yet. Each gets built and tested in the release that needs it,
+following the design in [PLAN.md](PLAN.md#security):
 
 - It listens only on your Mac until you turn on remote access, and then only over HTTPS.
 - Each device gets its own token, with its own permissions, and you can revoke one without touching
   the others.
-- Model files can't run code: mia accepts safetensors weights only, never runs code from a model
-  repository, and refuses anything else with no override.
-- Only one part of mia downloads models. The part that runs them works offline.
-- Prompts stay out of logs, and images are saved with no metadata, because the image engine would
-  otherwise write your prompt and home folder into every one.
-
-`mia doctor`, the one command that exists today, only reads. It makes no network connections.

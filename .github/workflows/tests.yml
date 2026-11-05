@@ -1,9 +1,9 @@
 name: tests
 
 # The checks every pull request must pass before it can merge (each job is a required check on
-# main). scripts/check.sh runs the same checks locally. The smoke test through the API and MCP,
-# and the import of the real engine packages on macOS, join this file in the releases that bring
-# what they check (PLAN.md, "Quality and CI"). No job ever runs a real model.
+# main). scripts/check.sh runs the same checks locally. The smoke test through the API and MCP joins
+# this file in the releases that bring it (PLAN.md, "Quality and CI"). No job ever runs a real model:
+# scripts/real-engine.sh does that, by hand.
 on:
   push:
     branches: [main]
@@ -75,9 +75,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The oldest Python mia supports, and the newest. The engines may narrow this: PLAN.md's
-        # spike finds out which versions they support.
-        python: ["3.12", "3.15"]
+        # The oldest Python mia supports, and the newest the engine installs on.
+        python: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,6 +91,7 @@ jobs:
         run: uv run --no-sync pytest -q --cov=mia --cov-report=term-missing:skip-covered
 
   # mia runs only on macOS, so the tests run under macOS's own sh and tools on Apple Silicon too.
+  # This job alone installs the real engine's packages, to catch one that stops fitting the others.
   pytest-macos:
     name: pytest (macOS)
     runs-on: macos-latest
@@ -104,5 +104,5 @@ jobs:
         with:
           version: "0.13.7"
           enable-cache: false
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked --extra dev --extra engine
       - run: uv run --no-sync pytest -q

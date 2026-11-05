@@ -4,7 +4,7 @@ Where mia is, release by release. Every pull request updates this page when it f
 changes something here. [PLAN.md](../PLAN.md#roadmap) has the detail of each release and the reasons
 behind it.
 
-**Now:** 0.2.0 is in progress. It's the first version that makes images, and the first release.
+**Now:** 0.2.0 is in progress. It makes images from the command line, and is the first release.
 
 | Release | What it brings | Status |
 |---|---|---|
