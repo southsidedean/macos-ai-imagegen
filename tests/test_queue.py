@@ -12,7 +12,7 @@ from mia import catalog, db, gpu, history, jobs, paths, tokens
 from mia.engine import Cancelled, Engine, MiaError, Request
 from mia.fake_engine import FakeEngine
 from mia.generate import generate
-from mia.supervisor import Supervisor, recover_if_free
+from mia.supervisor import STALL_SECONDS, STALLED, Supervisor, recover_if_free
 from mia.worker import NewModelNeeded, Worker, sweep_images
 
 KLEIN, SCHNELL = catalog.MODELS[0].id, catalog.MODELS[1].id
@@ -394,7 +394,7 @@ def test_a_dead_workers_job_is_retried_if_recovery_fails_the_first_time(monkeypa
     supervisor._process = Dead()  # type: ignore[assignment]
     outcomes = iter([sqlite3.OperationalError("database is locked"), None])
 
-    def recover() -> None:
+    def recover(_reason: str | None = None) -> None:
         outcome = next(outcomes)
         if outcome:
             raise outcome
@@ -461,3 +461,105 @@ def test_token_names_and_scopes_are_checked() -> None:
         tokens.create("tablet", "root")
     tokens.revoke("phone")
     assert tokens.create("phone")  # the name is free again
+
+
+class _Running:
+    """A worker that's alive until killed, for checks that only look at what the supervisor decides."""
+
+    killed = False
+
+    def poll(self) -> int | None:
+        return -9 if self.killed else None
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def _watching(monkeypatch: pytest.MonkeyPatch) -> tuple[Supervisor, _Running, list[float]]:
+    clock = [1000.0]
+    monkeypatch.setattr("mia.supervisor.time.monotonic", lambda: clock[0])
+    supervisor = Supervisor()
+    process = _Running()
+    supervisor._process = process  # type: ignore[assignment]
+    return supervisor, process, clock
+
+
+def test_a_job_that_stops_progressing_is_failed_and_the_next_can_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    job, _ = jobs.submit(REQUEST, KLEIN)
+    waiting, _ = jobs.submit(REQUEST, KLEIN)
+    jobs.claim(job.id)
+    supervisor, process, clock = _watching(monkeypatch)
+    supervisor._check()  # first sight of it
+    clock[0] += STALL_SECONDS
+    supervisor._check()
+    assert not process.killed  # not yet: only past the limit
+    clock[0] += 1
+    supervisor._check()
+    assert process.killed
+    supervisor._check()  # finds it dead
+    ended = state(job.id)
+    assert ended.state == jobs.FAILED and ended.error == STALLED
+    assert state(waiting.id).state == jobs.QUEUED
+    assert supervisor._process is None and supervisor._ended_because is None
+
+
+def test_a_slow_job_that_keeps_progressing_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    job, _ = jobs.submit(REQUEST, KLEIN)
+    jobs.claim(job.id)
+    supervisor, process, clock = _watching(monkeypatch)
+    supervisor._check()
+    for step in range(1, 5):  # each step takes most of the limit, so the whole job takes far longer than it
+        clock[0] += STALL_SECONDS - 1
+        jobs.set_step(job.id, step)
+        supervisor._check()
+    assert not process.killed
+
+
+def test_an_idle_worker_is_never_stalled(monkeypatch: pytest.MonkeyPatch) -> None:
+    supervisor, process, clock = _watching(monkeypatch)
+    supervisor._check()
+    clock[0] += STALL_SECONDS * 10
+    supervisor._check()
+    assert not process.killed
+
+
+def test_the_next_job_gets_its_own_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    first, _ = jobs.submit(REQUEST, KLEIN)
+    second, _ = jobs.submit(REQUEST, KLEIN)
+    jobs.claim(first.id)
+    supervisor, process, clock = _watching(monkeypatch)
+    supervisor._check()
+    clock[0] += STALL_SECONDS - 1
+    jobs.fail(first.id, "over")
+    jobs.claim(second.id)
+    supervisor._check()
+    clock[0] += STALL_SECONDS - 1
+    supervisor._check()
+    assert not process.killed
+
+
+def test_a_cancelled_job_that_stalls_still_counts_as_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    job, _ = jobs.submit(REQUEST, KLEIN)
+    jobs.claim(job.id)
+    jobs.cancel(job.id)
+    supervisor, process, _clock = _watching(monkeypatch)
+    process.killed = True
+    supervisor._check()
+    assert state(job.id).state == jobs.CANCELLED
+
+
+def test_a_hung_engine_is_killed_for_real(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A real worker, stuck in a step far longer than the test, which only a kill can end.
+    monkeypatch.setenv("MIA_FAKE_STEP_SECONDS", "300")
+    monkeypatch.setattr("mia.supervisor.STALL_SECONDS", 2.0)
+    monkeypatch.setattr("mia.supervisor.CHECK_SECONDS", 0.1)
+    job, _ = jobs.submit(REQUEST, KLEIN)
+    supervisor = Supervisor()
+    supervisor.start()
+    try:
+        deadline = time.monotonic() + 30
+        while state(job.id).state != jobs.FAILED and time.monotonic() < deadline:
+            time.sleep(0.1)
+    finally:
+        supervisor.stop()
+    assert state(job.id).error == STALLED

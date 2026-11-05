@@ -395,21 +395,31 @@ GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as b
 
 Still open: real MCP clients, FLUX.1 dev, and the default cache against the capped one on the shipped versions.
 
-### What 0.4 has to fix first
+### What 0.4 had to fix first
 
-An independent review of 0.3 found no way past a token. These are its findings that don't matter while the API
-listens only on the Mac, and do once it doesn't:
+An independent review of 0.3 found no way past a token, and listed what wouldn't matter until the API left the Mac.
+These were fixed before anything else in 0.4:
 
-- Idle connections need a time limit and a cap. Today a local process can hold many open with no token, and the
-  raised open-file limit only makes that harder. uvicorn's keep-alive timeout doesn't cover a connection that
-  hasn't sent its first request.
-- Failed sign-ins aren't limited, and each one opens the database.
-- The body is read before the token is checked. It's capped at 64 KB, but it's still work done for strangers.
-- All tokens share one queue and history, and don't expire. That suits one household, and the docs say so. Decide
-  whether remote access changes that.
-- A job has no time limit, so an engine that hangs without a cancel holds the queue.
+- Connections: a request has 15 seconds to arrive, however slowly it's sent, and connections are capped at 64 per
+  address and 256 overall. uvicorn's own timer only covers the gap between requests.
+- Tokens are checked in the Guard, before the body is read, for every path but the named public ones. So a route or
+  mount added later, as MCP's may be, starts out closed.
+- Refused requests are limited to 30 a minute per address, and past that they cost no database work. A token can't
+  be guessed, so this is about the work, and a device on that address waits a minute with the rest.
+- All tokens still share one queue and history, including over the network (decided 2026-11-05). Separating them
+  would be user accounts, which are out of scope for 1.0, and the docs say to give tokens only to trusted devices.
+  Tokens can now have an end date with `--days`, and last until revoked by default.
+- A job fails if its step doesn't change for 30 minutes, which restarts the worker. There's no limit on a whole job:
+  its steps are capped already, and any fixed limit would either be too long to help or too short for a slow Mac.
+  It uses a clock that stops while the Mac sleeps.
+
+Still to do:
+
+- HTTPS: asyncio does a TLS handshake before mia sees the connection, so neither the deadline nor the caps cover
+  one in progress. The HTTPS change has to deal with that, using a shorter handshake timeout at the least.
+- Uploads in 0.7 need a higher size limit and more time to arrive, on their routes alone.
 - The web page's cookies in 0.5 need `Sec-Fetch-Site` checks and CSRF protection, because the Guard allows a
-  missing `Origin`, safe today only because tokens are header-only.
+  missing `Origin`, safe today only because tokens are header-only. The Guard's sign-in has to learn about them too.
 
 ## Risks
 

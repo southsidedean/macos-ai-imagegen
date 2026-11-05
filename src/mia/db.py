@@ -27,6 +27,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         created TEXT NOT NULL, last_used REAL, revoked TEXT)""",
         "CREATE UNIQUE INDEX tokens_active_name ON tokens (name) WHERE revoked IS NULL",
     ),
+    ("ALTER TABLE tokens ADD COLUMN expires REAL",),
 )
 SCHEMA = len(MIGRATIONS)
 

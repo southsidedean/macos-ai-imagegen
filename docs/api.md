@@ -97,13 +97,15 @@ Each device or script gets its own token, so you can stop one without touching t
 
 ```sh
 uv run mia token create --for laptop --scope read
+uv run mia token create --for visitor --days 7
 uv run mia token list
 uv run mia token revoke laptop
 ```
 
 A token has one of three scopes, and each includes the ones before it. `read` can look, `generate` can also
 make and stop jobs (the default), and `admin` can also delete images. mia stores only a hash of each token,
-so a lost one can't be shown again: revoke it, and make another. Tokens don't expire.
+so a lost one can't be shown again: revoke it, and make another. A token lasts until you revoke it, unless you
+give it `--days`, from 1 to 3,650.
 
 All tokens work on the same queue and history: a `read` token can see every device's prompts, and a `generate`
 token can stop any job. mia is built for one person's or household's devices, not for people who shouldn't see
@@ -116,14 +118,21 @@ Tokens go only in the `Authorization` header, never in a URL, where they would e
 | Limit | Value | What you get |
 |---|---|---|
 | Requests per device, per minute | 240 | 429, with `Retry-After` |
+| Refused requests from one address, per minute | 30 | 429, with `Retry-After`, even with a good token, until the minute has passed |
 | Jobs submitted per device, per minute | 30 | 429, with `Retry-After` |
 | Jobs waiting in the queue | 20 | 429, with `Retry-After` |
 | Open event streams | 8 per device, 32 in all | 429, with `Retry-After` |
 | A request's size | 64 KB | 413, or 411 with no `Content-Length` |
+| Time for a whole request to arrive | 15 seconds | The connection is closed |
+| Open connections | 64 from one address, 256 in all | A new connection is closed |
 | Free disk needed to accept a job | 2 GB | 507 |
 
 A model that isn't downloaded yet gets a 409, with the command that downloads it. A request that can't be
-understood gets a 422 saying which field and why, without repeating what you sent.
+understood gets a 422 saying which field and why, without repeating what you sent. Any path but `/v1/health` and
+`/openapi.json` gets a 401 without a token, even one that doesn't exist.
+
+A job has no limit on how long it takes, as long as it keeps moving. If its `step` doesn't change for 30 minutes,
+mia restarts the worker and marks the job failed, and the next job runs. Time the Mac spends asleep doesn't count.
 
 ## Good to know
 

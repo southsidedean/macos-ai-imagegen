@@ -2,6 +2,14 @@
 
 ## 0.4.0 (unreleased)
 
+- Connections have limits. A request has 15 seconds to arrive, and connections are capped at 64 from one address
+  and 256 overall.
+- Every path but `/v1/health` and `/openapi.json` now needs a token, even one that doesn't exist, and the token is
+  checked before a request's body is read.
+- 30 refused requests in a minute from one address get a 429 until the minute has passed, even with a good token.
+- `mia token create --days 7` makes a token with an end date. Tokens still last until revoked by default.
+- A job whose step doesn't change for 30 minutes is marked failed, and the worker restarts for the next job.
+
 ## 0.3.0 (2026-11-04)
 
 Scripts and other programs on your Mac can now make images, through a REST API and a queue. Reaching mia

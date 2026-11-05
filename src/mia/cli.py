@@ -99,8 +99,9 @@ def _history() -> int:
 
 def _token(args: argparse.Namespace) -> int:
     if args.action == "create":
-        issued = tokens.create(args.device, args.scope)
-        print(f"A {args.scope} token for {args.device}. It won't be shown again:", file=sys.stderr)
+        issued = tokens.create(args.device, args.scope, args.days)
+        lasting = f", lasting {args.days} days" if args.days else ""
+        print(f"A {args.scope} token for {args.device}{lasting}. It won't be shown again:", file=sys.stderr)
         print(issued)
     elif args.action == "revoke":
         tokens.revoke(args.device)
@@ -109,6 +110,8 @@ def _token(args: argparse.Namespace) -> int:
         for device in tokens.devices():
             used = "never used" if device.last_used is None else "used " + time.strftime("%Y-%m-%d", time.localtime(device.last_used))
             state = f"revoked {device.revoked}" if device.revoked else used
+            if device.expires is not None and not device.revoked:
+                state += ("  expired " if device.expires <= time.time() else "  expires ") + time.strftime("%Y-%m-%d", time.localtime(device.expires))
             print(f"{device.name}  {device.scope}  {state}")
     return 0
 
@@ -142,6 +145,7 @@ def _parser() -> argparse.ArgumentParser:
     create = actions.add_parser("create", help="make a token, shown once")
     create.add_argument("--for", dest="device", required=True, metavar="NAME", help="the device it's for")
     create.add_argument("--scope", choices=tokens.SCOPES, default=tokens.GENERATE, help="default: %(default)s")
+    create.add_argument("--days", type=int, help="stop working after this many days; default: until revoked")
     actions.add_parser("list", help="the devices with tokens; the same as no action")
     revoke = actions.add_parser("revoke", help="stop a device's token working")
     revoke.add_argument("device", metavar="NAME")

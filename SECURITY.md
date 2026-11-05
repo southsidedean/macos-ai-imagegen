@@ -26,23 +26,27 @@ Working today, and tested:
 - mia's folder and history file are readable only by you.
 - The API listens only on this Mac, and refuses a request whose `Host` or `Origin` names anywhere else,
   which stops a web page from reaching it through DNS rebinding.
-- Every route but a bare health check and the API's public description needs a token, and only in the
-  `Authorization` header. A test walks the app's routes to prove it. Each device
-  has its own, with its own permissions, stored only as a hash and shown once. You can revoke one without
-  touching the others.
-- Requests and event streams are limited per device, as are the queue's length and a request's size.
+- Everything but a bare health check and the API's public description needs a token, and only in the
+  `Authorization` header. It's checked before a request's body is read, and a test walks the app's routes to
+  prove each needs one. Each device has its own, with its own permissions, stored only as a hash and shown once.
+  You can revoke one without touching the others, and give one an end date.
+- Requests and event streams are limited per device, as are the queue's length and a request's size. Refused
+  requests are limited per address.
+- A connection gets 15 seconds to deliver a whole request, and connections are capped per address and overall, so
+  holding many open with no token doesn't use up the server.
 - An answer that refuses a request doesn't repeat what was sent, and prompts stay out of the server's output.
 - Deleting an image also deletes the job that made it. Finished jobs, which hold prompts, are forgotten after 30
   days.
 - The API can read or delete image files only in mia's own images folder.
 - The API process doesn't load the image engine, so a crash there can't take it down.
 
-Known limits, on this Mac for now because nothing else can reach the API:
+Known limits:
 
-- All tokens share one queue and history, and tokens don't expire. mia is built for one person's or household's
-  devices.
-- A process on your Mac can hold many idle connections open with no token, and could use up the server's
-  connections. This needs fixing before remote access arrives.
+- All tokens share one queue and history, so give tokens only to devices you trust. mia is built for one person's
+  or household's devices.
+- Every process on your Mac shares one address, so one holding 64 connections or sending 30 bad tokens can make
+  other programs on the Mac wait. It can't do that to other machines.
+- A device with a token can hold a connection open by reading an answer very slowly, up to the connection caps.
 
 Still to come, following the design in [PLAN.md](PLAN.md#security): remote access over HTTPS, in 0.4.
 Until then, there's no way to turn on access from another machine.
