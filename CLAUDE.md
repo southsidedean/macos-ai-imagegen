@@ -10,7 +10,7 @@ models, FLUX first, through a web page, a REST API, an MCP server, and a command
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
 before starting work, and update it in the same pull request when a decision changes. 0.3.0 is
-released, with a local REST API, a queue, and a worker; 0.4 brings MCP and remote access. `docs/roadmap.md` is the
+released, with a local REST API, a queue, and a worker; 0.4 brings MCP, which is working, and remote access. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
@@ -21,9 +21,12 @@ formats, or depend on it.
 
 This is the design from `PLAN.md`; these parts arrive release by release.
 
-- `mia serve` runs the REST API (`server.py`), and later the MCP server and the web page. It never imports an
+- `mia serve` runs the REST API (`server.py`), the MCP server, and later the web page. It never imports an
   ML package, and a test checks that. `supervisor.py` is a thread in it that starts the worker, restarts it,
   and records what a dead one left behind.
+- MCP tools (`mcp_server.py`) only call the REST API: within the process at `/mcp`, with the assistant's token, and
+  over the network from `mia mcp`. New behaviour goes in a REST route, so the checks stay in one place. The set of
+  tools is named in `tests/test_mcp.py`, so adding one is a choice.
 - `mia worker` is the only process that loads a model. It runs one job at a time, runs offline
   (`HF_HUB_OFFLINE=1`), and may crash or be killed without taking the API down. It keeps the model
   loaded with MLX's cache capped (`mx.set_cache_limit`): the default cache made jobs slow and uneven.

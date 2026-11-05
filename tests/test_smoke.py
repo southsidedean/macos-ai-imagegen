@@ -6,6 +6,8 @@ next job working.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import http.client
 import json
 import os
@@ -18,7 +20,11 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
+from mcp import Client, StdioServerParameters
+from mcp.client.streamable_http import streamable_http_client
+from mcp.types import CallToolResult, ImageContent, ResourceLink, TextContent
 
 pytestmark = pytest.mark.timeout(60)
 
@@ -335,6 +341,55 @@ def test_killing_the_worker_at_each_gap_leaves_a_consistent_answer(service: Serv
     )
 
 
+def _walk_a_job_through_mcp(client: Client) -> Any:
+    """What an assistant does: start a job, wait, look at the preview, and read the full picture."""
+
+    async def walk() -> tuple[CallToolResult, bytes]:
+        arguments = {"prompt": "a mcp job", "width": 512, "height": 512, "steps": 2, "seed": 3, "wait_seconds": 30}
+        finished = await client.call_tool("mia_generate", arguments)
+        link = finished.content[2]
+        assert isinstance(link, ResourceLink)
+        read = await client.read_resource(str(link.uri))
+        return finished, base64.b64decode(read.contents[0].blob)  # type: ignore[union-attr]
+
+    return walk()
+
+
+def _check_the_walk(finished: CallToolResult, picture: bytes) -> None:
+    text = finished.content[0]
+    assert isinstance(text, TextContent) and json.loads(text.text)["state"] == "done"
+    assert isinstance(finished.content[1], ImageContent)
+    assert base64.b64decode(finished.content[1].data).startswith(b"\xff\xd8\xff")
+    assert picture.startswith(b"\x89PNG")
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])  # the newest protocol, and what older clients speak
+def test_an_assistant_makes_an_image_over_http(service: Service, mode: str) -> None:
+    async def main() -> tuple[CallToolResult, bytes]:
+        # trust_env is off because the fence around tests points proxy settings at a dead port.
+        headers = {"Authorization": f"Bearer {service.token}"}
+        async with httpx2.AsyncClient(headers=headers, timeout=60, trust_env=False) as sender:
+            transport = streamable_http_client(f"http://127.0.0.1:{service.port}/mcp", http_client=sender)
+            async with Client(transport, mode=mode) as client:
+                return await _walk_a_job_through_mcp(client)  # type: ignore[no-any-return]
+
+    _check_the_walk(*asyncio.run(main()))
+
+
+def test_an_assistant_makes_an_image_through_the_stdio_bridge(service: Service) -> None:
+    command = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "mia", "mcp", "--url", f"http://127.0.0.1:{service.port}"],
+        env={"MIA_TOKEN": service.token, "PATH": os.environ.get("PATH", ""), "HOME": str(service.folder)},
+    )
+
+    async def main() -> tuple[CallToolResult, bytes]:
+        async with Client(command) as client:
+            return await _walk_a_job_through_mcp(client)  # type: ignore[no-any-return]
+
+    _check_the_walk(*asyncio.run(main()))
+
+
 def test_nothing_private_reaches_the_servers_output(tmp_path: Path) -> None:
     home = tmp_path / "mia"
     env = {**os.environ, "MIA_HOME": str(home), "MIA_ENGINE": "fake"}
@@ -363,6 +418,19 @@ def test_nothing_private_reaches_the_servers_output(tmp_path: Path) -> None:
         assert call("POST", "/v1/jobs", json.dumps({"prompt": "a secret-looking prompt", "width": 512, "height": 512, "steps": 1})) == 202
         assert call("GET", "/v1/images?search=secret-looking") == 200
         assert call("POST", "/v1/jobs", '{"prompt": "a secret-looking \\ud83d prompt"}') == 422
+
+        async def through_mcp() -> None:
+            # A tool call that works, and one the API refuses, which is where a prompt would most likely be logged.
+            async with (
+                httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}, timeout=30, trust_env=False) as sender,
+                Client(streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=sender)) as client,
+            ):
+                await client.call_tool("mia_generate", {"prompt": "a secret-looking prompt", "width": 512, "height": 512, "steps": 1})
+                assert (await client.call_tool("mia_generate", {"prompt": "a secret-looking prompt", "width": 1000})).is_error
+                assert (await client.call_tool("mia_generate", {"prompt": "a secret-looking prompt", "width": "not a number"})).is_error
+                assert (await client.call_tool("mia_job", {"job_id": "secret-looking"})).is_error
+
+        asyncio.run(through_mcp())
         time.sleep(1)
     finally:
         process.terminate()

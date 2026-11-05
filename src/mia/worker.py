@@ -26,6 +26,7 @@ RESTART_FOR_MODEL = 0  # an ordinary exit: whatever supervises the worker starts
 STOPPED = "mia was stopped while this job was running"
 IMAGE_ID = re.compile(r"[0-9a-f]{12}")
 PARTIAL = re.compile(r"\.[0-9a-f]{12}\.partial\.png")
+PARTIAL_PREVIEW = re.compile(r"\.[0-9a-f]{12}\.partial\.jpg")
 PRUNE_SECONDS = 3600
 
 
@@ -93,9 +94,10 @@ def sweep_images() -> None:
     """
     folder = paths.images_folder()
     leftovers = [path for path in folder.glob(".*.partial.png") if PARTIAL.fullmatch(path.name)]
+    leftovers += [path for path in paths.previews_folder().glob(".*.partial.jpg") if PARTIAL_PREVIEW.fullmatch(path.name)]
     for job_id, image_id in jobs.plans_left_behind():
         if IMAGE_ID.fullmatch(image_id) and history.get(paths.history_file(), image_id) is None:
-            leftovers.append(folder / f"{image_id}.png")
+            leftovers += [folder / f"{image_id}.png", paths.preview_file(image_id)]
         jobs.forget_plan(job_id)
     for path in leftovers:
         try:

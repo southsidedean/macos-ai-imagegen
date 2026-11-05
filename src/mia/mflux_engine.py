@@ -19,6 +19,7 @@ from mia.engine import Cancelled, MiaError, Progress, Request
 # MLX's reusable cache grows to about 20 GB by default, and on a Mac doing other work that made jobs
 # take 35 to 160 seconds. At this size every job took 32, with the same pixels.
 CACHE_LIMIT = 2 * 1024**3
+PREVIEW_SIDE = 512  # a few tens of KB, which an assistant can afford to read
 
 
 class _Stop(Exception):
@@ -90,3 +91,12 @@ class MfluxEngine:
         image.info.clear()
         image.save(output, format="PNG")
         return hashlib.sha256(image.tobytes()).hexdigest()
+
+    def preview(self, picture: Path, output: Path) -> None:
+        from PIL import Image
+
+        with Image.open(picture) as image:
+            small = image.convert("RGB")
+        small.thumbnail((PREVIEW_SIDE, PREVIEW_SIDE))
+        small.info.clear()
+        small.save(output, format="JPEG", quality=80)

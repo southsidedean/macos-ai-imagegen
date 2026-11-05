@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import secrets
 import sqlite3
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,6 +48,22 @@ def _quiet(_step: int, _total: int) -> None:
     pass
 
 
+def _save_preview(engine: Engine, picture: Path, image_id: str) -> None:
+    """The picture is what matters: without a preview, an assistant still gets its link, so this can't fail the job."""
+    final = paths.preview_file(image_id)
+    partial = final.with_name(f".{image_id}.partial.jpg")
+    try:
+        paths.make_private(final.parent)
+        engine.preview(picture, partial)
+        partial.replace(final)
+    except Exception as problem:
+        with contextlib.suppress(OSError, ValueError):
+            print(f"couldn't make a preview: {type(problem).__name__}", file=sys.stderr, flush=True)
+    finally:
+        with contextlib.suppress(OSError):
+            partial.unlink(missing_ok=True)
+
+
 def generate(
     request: Request,
     model: Model,
@@ -57,6 +75,7 @@ def generate(
     image_id: str | None = None,
 ) -> history.Record:
     image_id = image_id or new_image_id()
+    in_our_folder = output is None
     if output is None:
         paths.make_private(paths.home_folder())
         paths.make_private(paths.images_folder())
@@ -72,6 +91,8 @@ def generate(
         partial.replace(output)
     finally:
         partial.unlink(missing_ok=True)
+    if in_our_folder:  # the API can only reach pictures here, so one saved elsewhere has no use for a preview
+        _save_preview(engine, output, image_id)
     record = history.Record(
         id=image_id,
         created=datetime.now(UTC).isoformat(timespec="seconds"),

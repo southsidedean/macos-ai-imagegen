@@ -86,10 +86,12 @@ Finished jobs are forgotten after 30 days. Their images stay until you delete th
 | `GET /v1/images` | read | History, newest first. Takes `search`, `limit`, and `offset` |
 | `GET /v1/images/{id}` | read | An image's prompt and settings |
 | `GET /v1/images/{id}/file` | read | The PNG |
+| `GET /v1/images/{id}/preview` | read | A JPEG up to 512 pixels on its longest side. An image from before 0.4 has none, and gets a 404 |
 | `DELETE /v1/images/{id}` | admin | Permanently deletes an image's record, the job that made it, and its file. A file saved elsewhere with `mia generate --output` stays where it is |
 | `GET /v1/models` | read | The models mia knows, and which are downloaded |
 
-`GET /openapi.json` describes all of this in a form tools can read.
+`GET /openapi.json` describes all of this in a form tools can read. `/mcp` is for AI assistants: see
+[Connecting an AI assistant](mcp.md).
 
 ## Tokens
 

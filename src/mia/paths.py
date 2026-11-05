@@ -37,3 +37,11 @@ def make_private(folder: Path) -> None:
     """
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
+
+
+def previews_folder() -> Path:
+    return images_folder() / "previews"
+
+
+def preview_file(image_id: str) -> Path:
+    return previews_folder() / f"{image_id}.jpg"
