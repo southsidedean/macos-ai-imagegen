@@ -9,8 +9,8 @@ repository.
 models, FLUX first, through a web page, a REST API, an MCP server, and a command.
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
-before starting work, and update it in the same pull request when a decision changes. 0.3.0 is
-released, with a local REST API, a queue, and a worker; 0.4 brings MCP, the launchd service, and HTTPS on your LAN, which all work, and awaits its review and release. `docs/roadmap.md` is the
+before starting work, and update it in the same pull request when a decision changes. 0.4.0 is
+released, with a REST API, a queue, a worker, MCP, the launchd service, and HTTPS on your LAN; 0.5 brings the web page. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
