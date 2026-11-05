@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
 ## 0.3.0 (2026-11-04)
 
 Scripts and other programs on your Mac can now make images, through a REST API and a queue. Reaching mia
