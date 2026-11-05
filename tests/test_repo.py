@@ -101,5 +101,24 @@ def test_the_roadmap_and_changelog_name_this_version() -> None:
     assert version in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
+def release_notes(version: str, changelog: Path) -> subprocess.CompletedProcess[str]:
+    script = ROOT / "scripts" / "release-notes.sh"
+    return subprocess.run(["sh", str(script), version, str(changelog)], capture_output=True, text=True, check=False)
+
+
+def test_release_notes_are_one_finished_section(tmp_path: Path) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n## 0.3.0 (unreleased)\n\n- new\n\n## 0.2.0 (2026-11-04)\n\n- first\n\n## 0.1.0 (2026-01-01)\n\n"
+        "## 0.0.1 (2025-01-01)\n\n- old\n",
+        encoding="utf-8",
+    )
+    done = release_notes("0.2.0", changelog)
+    assert done.returncode == 0
+    assert done.stdout.strip() == "- first"
+    for version in ("0.3.0", "0.1.0", "9.9.9", "0.2"):  # unreleased, empty, missing, and a partial match
+        assert release_notes(version, changelog).returncode == 1, version
+
+
 def test_the_package_has_a_version() -> None:
     assert re.fullmatch(r"\d+\.\d+\.\d+(\.dev\d+)?", mia.__version__)

@@ -1,0 +1,64 @@
+name: release
+
+# Runs on a release tag: checks the tag is signed and matches the code, builds the package, attests
+# how it was built, and publishes a release with its SBOM. The notes come from CHANGELOG.md, so what
+# people read is what was reviewed. CI never runs a real model: scripts/real-engine.sh runs by hand
+# before tagging.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# Nothing at the top level: the one job asks only for what it needs.
+permissions: {}
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # to publish the release
+      id-token: write # to sign the attestation
+      attestations: write # to store the attestation
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache: a cache another run wrote shouldn't reach what gets published.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: false
+      - name: The tag is signed, and GitHub knows the key
+        run: |
+          object=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')
+          case "$object" in
+          "tag "*) ;;
+          *)
+            echo "$TAG isn't an annotated tag, so it can't be signed." >&2
+            exit 1
+            ;;
+          esac
+          verified=$(gh api "repos/$GH_REPO/git/tags/${object#tag }" --jq .verification.verified)
+          test "$verified" = true
+      - name: The tag matches the code's version
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/mia/__init__.py)
+          test "$TAG" = "v$version"
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+      - name: The notes, from CHANGELOG.md
+        run: sh scripts/release-notes.sh "$VERSION" CHANGELOG.md >"$RUNNER_TEMP/notes.md"
+      - name: Build the package and its SBOM
+        run: |
+          uv build --out-dir dist
+          uv export --locked --all-extras --format cyclonedx1.5 -o "dist/mia-$VERSION.cdx.json"
+      - name: Attest how they were built
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Publish the release
+        run: gh release create "$TAG" dist/* --verify-tag --title "mia $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
