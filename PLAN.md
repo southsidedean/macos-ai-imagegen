@@ -211,6 +211,13 @@ Generated images and prompts are private, and this service will take requests ov
   authority mia makes once, which each device trusts. It needs no extra software, and reaches only
   your own network. Tailscale Serve can follow for use away from home. Plain HTTP is never offered
   for remote use, and no path needs a port opened on the router.
+- The authority's certificate limits it to `.local` and the names you chose, and it can't be limited
+  by address (decided 2026-11-05). Limiting addresses as well passed OpenSSL and Apple's checks, then
+  Claude Code refused every certificate holding an address, with `unsupported name constraint type`:
+  BoringSSL doesn't do that check. Devices without Bonjour need addresses, so names alone wouldn't do.
+  A stolen key could pose as a bare address, which matters far less than a site's name.
+- HTTPS is TLS 1.3 only, and mia drops connections from outside this Mac and the private ranges,
+  before a handshake. That rules out Tailscale's addresses for now, so that change has to widen it.
 - Per-device tokens. `mia token create --for laptop --scope generate`. Scopes are `read`,
   `generate`, and `admin`. Only hashes are stored, tokens can be revoked one at a time, and they're
   accepted only in the `Authorization` header, never a URL. The web page signs in with one and keeps
@@ -416,6 +423,19 @@ Still open: other MCP clients, a client on another machine, FLUX.1 dev, the defa
 shipped versions, and two things the service hasn't been through: a real restart and login, and a Mac actually reaching
 its idle sleep time during a job.
 
+### HTTPS on a real LAN
+
+Tested on 2026-11-05, from a second machine on the same network, running Linux, with a throwaway `MIA_HOME`:
+
+- The real model, requested and fetched over MCP through `mia mcp --ca` on that machine: done in 32 seconds, with the known
+  pixels. The preview and the full PNG both arrived, and neither the prompt nor the token was in the server's log.
+- From there: the authority's fingerprint matched, curl without it was refused, and plain HTTP got nothing on either port.
+  No token gave 401, another `Host` or `Origin` 403, and TLS 1.2 was refused.
+- Claude Code 2.1.311, on the Mac but connecting through its LAN address, called a tool directly with `NODE_EXTRA_CA_CERTS`
+  and through `mia mcp --ca`, and failed without the authority. It's what found the limit on addresses described under Security.
+- Not tested: a real assistant on the other machine (it didn't have one, so a scripted MCP client stood in), the macOS firewall
+  turned on, a phone, and browsers, which the web page will need.
+
 ### What 0.4 had to fix first
 
 An independent review of 0.3 found no way past a token, and listed what wouldn't matter until the API left the Mac.
@@ -430,14 +450,16 @@ These were fixed before anything else in 0.4:
 - All tokens still share one queue and history, including over the network (decided 2026-11-05). Separating them
   would be user accounts, which are out of scope for 1.0, and the docs say to give tokens only to trusted devices.
   Tokens can now have an end date with `--days`, and last until revoked by default.
+- A TLS handshake happens before any protocol sees a connection, where neither the deadline nor the caps reach, and uvicorn
+  can't time one. So `server.Server` accepts HTTPS connections itself and uses asyncio's `connect_accepted_socket`: a
+  handshake has 5 seconds, with 16 in progress from one address and 64 overall. On a real LAN, a silent connection was
+  dropped at 5.0 seconds, and of 40 at once, 24 were dropped straight away.
 - A job fails if its step doesn't change for 30 minutes, which restarts the worker. There's no limit on a whole job:
   its steps are capped already, and any fixed limit would either be too long to help or too short for a slow Mac.
   It uses a clock that stops while the Mac sleeps.
 
 Still to do:
 
-- HTTPS: asyncio does a TLS handshake before mia sees the connection, so neither the deadline nor the caps cover
-  one in progress. The HTTPS change has to deal with that, using a shorter handshake timeout at the least.
 - Uploads in 0.7 need a higher size limit and more time to arrive, on their routes alone.
 - The web page's cookies in 0.5 need `Sec-Fetch-Site` checks and CSRF protection, because the Guard allows a
   missing `Origin`, safe today only because tokens are header-only. The Guard's sign-in has to learn about them too.

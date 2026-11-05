@@ -10,7 +10,7 @@ models, FLUX first, through a web page, a REST API, an MCP server, and a command
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
 before starting work, and update it in the same pull request when a decision changes. 0.3.0 is
-released, with a local REST API, a queue, and a worker; 0.4 brings MCP and the launchd service, which work, and remote access. `docs/roadmap.md` is the
+released, with a local REST API, a queue, and a worker; 0.4 brings MCP, the launchd service, and HTTPS on your LAN, which all work, and awaits its review and release. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
@@ -50,6 +50,10 @@ This is the design from `PLAN.md`; these parts arrive release by release.
 - The worker exits after `MIA_IDLE_SECONDS` (10 minutes) idle with a model loaded, and the supervisor starts an empty one,
   because only a new process really hands back the memory. The supervisor also calls `service.rotate_log()`.
 - The worker holds `power.awake()` while a job runs, and only then. It's `caffeinate -w`, which ends if the worker dies.
+- `mia remote on` (`remote.py`) adds HTTPS for the LAN, off by default. `server.Server` accepts those connections itself, so it
+  can count and time a handshake, which asyncio does before any protocol sees a connection. Plain HTTP never leaves loopback.
+- The certificate authority limits names and not addresses: Claude Code's BoringSSL refuses any certificate with an address if
+  its authority limits addresses. OpenSSL and Apple accept it, so only a real client shows this. Try real clients on TLS changes.
 
 ## Commands
 
@@ -130,7 +134,7 @@ committed. Longer working notes go in the ignored `plans/` folder.
 No host names, domains, personal email addresses, home paths, LAN addresses, account names, tokens,
 hardware details of a real machine (chip, memory, free disk), or real prompts and images in code, docs, screenshots, commit messages, pull request bodies, or
 release notes. `CLAUDE.md` and `PLAN.md` are public too. Examples use stand-ins: `192.168.1.20`,
-`192.0.2.x`, and `my-mac.lan`. The user's own names live in `.git/hooks/private-names`, never
+`192.0.2.x`, `my-mac.lan`, and `my-mac.local`. The user's own names live in `.git/hooks/private-names`, never
 committed. The user's machines belong in Claude's project memory, not this repository.
 
 ## Docs

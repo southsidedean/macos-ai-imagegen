@@ -14,9 +14,10 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from mia import __version__, paths, service
+from mia import __version__, paths, remote, service
 from mia.engine import MiaError
 
 GB = 1024**3
@@ -45,6 +46,7 @@ class Facts:
     engines: dict[str, bool]
     models: int
     service: service.Status | None = None  # None where there's no launchd to ask
+    remote: remote.State | None = None  # None when it's off
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,13 @@ def _service_state() -> service.Status | None:
         return None
 
 
+def _remote_state() -> remote.State | None:
+    try:
+        return remote.state()
+    except MiaError:
+        return remote.State(remote.Settings((), ()), None)
+
+
 def gather() -> Facts:
     home = paths.home_folder()
     return Facts(
@@ -100,6 +109,7 @@ def gather() -> Facts:
         engines={name: importlib.util.find_spec(name) is not None for name in ENGINES},
         models=_count_models(paths.models_folder()),
         service=_service_state(),
+        remote=_remote_state(),
     )
 
 
@@ -154,6 +164,16 @@ def _service(state: service.Status) -> Finding:
     return Finding(PASS, "Service", f"running on port {state.port}")
 
 
+def _remote(state: remote.State | None) -> Finding:
+    if state is None:
+        return Finding(INFO, "Remote access", "off; only this Mac can reach mia")
+    if state.certificate_ends is None:
+        return Finding(WARN, "Remote access", "on, but it has no working certificate or settings; run mia remote on")
+    if state.certificate_ends <= datetime.now(UTC):
+        return Finding(WARN, "Remote access", "its certificate has run out; run mia service restart to renew it")
+    return Finding(PASS, "Remote access", f"on, at {', '.join(state.settings.urls)}")
+
+
 def findings(facts: Facts) -> list[Finding]:
     return [
         _machine(facts),
@@ -164,6 +184,7 @@ def findings(facts: Facts) -> list[Finding]:
         Finding(INFO, "mia's folder", f"{facts.folder} ({'found' if facts.folder.exists() else 'not made yet'})"),
         Finding(INFO, "Models", f"{facts.models} in the models folder"),
         *([_service(facts.service)] if facts.service else []),
+        _remote(facts.remote),
     ]
 
 

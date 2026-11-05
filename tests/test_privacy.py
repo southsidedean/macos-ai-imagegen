@@ -26,7 +26,7 @@ PRIVATE_NETWORKS = [
     for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
 ]
 # Path.home is Python's, not a host: ".home" is also a suffix people use on home networks.
-ALLOWED_NAMES = re.compile(r"(^|\.)my-mac\.lan$|^Path\.home$", re.IGNORECASE)
+ALLOWED_NAMES = re.compile(r"(^|\.)my-mac\.(lan|local)$|^Path\.home$", re.IGNORECASE)
 ALLOWED_EMAIL = re.compile(
     r"^(noreply@anthropic\.com|[\w.+-]+@users\.noreply\.github\.com|[\w.+-]+@example\.(com|org|net))$",
     re.IGNORECASE,
@@ -125,8 +125,8 @@ def test_the_checks_catch_what_they_should() -> None:
     # The patterns themselves, against made-up text, so a broken pattern can't pass silently.
     assert private_addresses("ssh 192.168.77.5 and 10.0.0.1 and 100.101.102.103")
     assert not private_addresses("example 192.168.1.20, docs 192.0.2.10, version 1.37.1")
-    names = LOCAL_NAME.findall("nas.lan my-mac.lan x.ts.net Path.home my-box.home")
-    assert [n for n in names if not ALLOWED_NAMES.search(n)] == ["nas.lan", "x.ts.net", "my-box.home"]
+    names = LOCAL_NAME.findall("nas.lan my-mac.lan my-mac.local nas.local x.ts.net Path.home my-box.home")
+    assert [n for n in names if not ALLOWED_NAMES.search(n)] == ["nas.lan", "nas.local", "x.ts.net", "my-box.home"]
     assert HOME_PATH.findall("/Users/someone/projects and /home/ubuntu/mia") == ["/Users/someone"]
     assert EMAIL.findall("me@my-domain.com renovate@44.155.1") == ["me@my-domain.com"]
     for text in ("an M3 Max", "M4 Pro", "the M1 chip", "64 GB of memory", "16GB RAM", "80 GB free"):

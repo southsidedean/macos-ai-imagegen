@@ -3,7 +3,8 @@
 mia has an MCP server, so an assistant that speaks MCP can make images, follow them, and look through what you've
 made. The assistant writes the prompt, and your Mac does the work. mia holds no AI keys and calls no AI service.
 
-For now, the assistant has to run on the same Mac. Reaching mia from another machine comes later in 0.4, with HTTPS.
+This guide is for an assistant on the same Mac. One on another machine needs [HTTPS turned on](remote.md), which also
+shows how to connect it.
 
 ## Start here
 
@@ -53,7 +54,7 @@ claude mcp add mia -e MIA_TOKEN=paste-your-token-here -- uv run --directory /pat
 ```
 
 It reads the token only from `MIA_TOKEN`. `--url` or `MIA_URL` says where the server is, by default
-`http://127.0.0.1:8765`. It refuses plain `http` to any other machine, because the token and your prompts would cross the
+`http://127.0.0.1:8765`, and `--ca` or `MIA_CA` says which certificate authority to trust. It refuses plain `http` to any other machine, because the token and your prompts would cross the
 network unprotected.
 
 ## Good to know

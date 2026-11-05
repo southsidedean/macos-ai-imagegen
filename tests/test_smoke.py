@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import http.client
 import json
 import os
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -25,6 +27,8 @@ import pytest
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, ImageContent, ResourceLink, TextContent
+
+from mia import paths, remote
 
 pytestmark = pytest.mark.timeout(60)
 
@@ -388,6 +392,45 @@ def test_an_assistant_makes_an_image_through_the_stdio_bridge(service: Service) 
             return await _walk_a_job_through_mcp(client)  # type: ignore[no-any-return]
 
     _check_the_walk(*asyncio.run(main()))
+
+
+def test_an_assistant_on_another_machine_would_reach_it_over_https(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real processes and real TLS. localhost stands in for the Mac's name, since tests stay on this machine, and mia
+    itself won't choose it, so the settings are written here."""
+    folder, https_port = tmp_path / "mia", free_port()
+    monkeypatch.setenv("MIA_HOME", str(folder))
+    settings = remote.Settings(("localhost",), (), https_port)
+    paths.make_private(folder)
+    paths.make_private(remote.authority_file().parent)
+    remote._make_authority(settings.names)
+    remote._issue(settings)
+    remote._write_private(remote._settings_file(), json.dumps(dataclasses.asdict(settings)).encode())
+    authority = str(remote.authority_file())
+    service = Service(folder)
+    command = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "mia", "mcp", "--url", f"https://localhost:{https_port}", "--ca", authority],
+        env={"MIA_TOKEN": service.token, "PATH": os.environ.get("PATH", ""), "HOME": str(service.folder)},
+    )
+
+    async def over_stdio() -> tuple[CallToolResult, bytes]:
+        async with Client(command) as client:
+            return await _walk_a_job_through_mcp(client)  # type: ignore[no-any-return]
+
+    async def over_http() -> tuple[CallToolResult, bytes]:
+        headers = {"Authorization": f"Bearer {service.token}"}
+        verify = ssl.create_default_context(cafile=authority)
+        async with (
+            httpx2.AsyncClient(headers=headers, timeout=60, trust_env=False, verify=verify) as sender,
+            Client(streamable_http_client(f"https://localhost:{https_port}/mcp", http_client=sender)) as client,
+        ):
+            return await _walk_a_job_through_mcp(client)  # type: ignore[no-any-return]
+
+    try:
+        _check_the_walk(*asyncio.run(over_stdio()))
+        _check_the_walk(*asyncio.run(over_http()))
+    finally:
+        service.stop()
 
 
 def test_an_idle_worker_gives_back_its_memory_and_the_next_job_still_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

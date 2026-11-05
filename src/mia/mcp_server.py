@@ -8,6 +8,7 @@ import asyncio
 import base64
 import json
 import re
+import ssl
 import time
 from collections.abc import Callable
 from ipaddress import ip_address
@@ -169,7 +170,7 @@ def check_url(url: str) -> str:
     """Tokens and prompts travel to this address, so only this Mac may be reached without HTTPS."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password or parts.path.strip("/") or parts.query or parts.fragment:
-        raise MiaError("MIA_URL should look like https://my-mac.lan:8765, with nothing after the port")
+        raise MiaError("MIA_URL should look like https://my-mac.lan:8766, with nothing after the port")
     if parts.scheme == "http":
         try:
             local = parts.hostname == "localhost" or ip_address(parts.hostname).is_loopback
@@ -180,7 +181,13 @@ def check_url(url: str) -> str:
     return url.rstrip("/")
 
 
-def bridge(url: str, token: str) -> MCPServer:
-    """For mia mcp. trust_env is off so that a proxy set in the environment never sees a token."""
-    http = httpx2.AsyncClient(base_url=check_url(url), timeout=httpx2.Timeout(60.0), trust_env=False)
+def bridge(url: str, token: str, authority: str | None = None) -> MCPServer:
+    """For mia mcp. trust_env is off so that a proxy set in the environment never sees a token. With an authority, it's
+    the only one trusted, which is what you want for a server you know."""
+    checked = check_url(url)
+    try:
+        verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=authority) if authority else True
+    except OSError as problem:
+        raise MiaError(f"mia can't use {authority} as a certificate authority: {problem.strerror or problem}") from None
+    http = httpx2.AsyncClient(base_url=checked, timeout=httpx2.Timeout(60.0), trust_env=False, verify=verify)
     return build(http, lambda _ctx: f"Bearer {token}")

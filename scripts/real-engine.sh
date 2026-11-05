@@ -335,6 +335,49 @@ else
 fi
 if grep -aq "$prompt" "$MIA_HOME/logs/serve.log"; then fail "20b. the prompt is in the log"; else pass "20b. the prompt isn't in the log"; fi
 
+# HTTPS under launchd, trusting only mia's authority. It listens on the network for as long as this check takes, and asks
+# for a token like everything else. The name is made up, so curl is told where it is.
+https_port=$((port + 1))
+secure_name=my-mac.local
+"$mia" remote on --name "$secure_name" --port "$https_port" >/dev/null
+"$mia" remote authority >"$work/authority.pem"
+"$mia" service restart >/dev/null
+answering || true
+secure() { # METHOD PATH [BODY]: prints the answer's body.
+	curl -fsS --cacert "$work/authority.pem" --resolve "$secure_name:$https_port:127.0.0.1" -X "$1" "https://$secure_name:$https_port$2" \
+		-H "Authorization: Bearer $token" -H "Content-Type: application/json" ${3:+-d "$3"}
+}
+tries=0
+until secure GET /v1/health >/dev/null 2>&1 || [ "$tries" -gt 60 ]; do
+	tries=$((tries + 1))
+	sleep 0.5
+done
+job=$(secure POST /v1/jobs "$body" | field id)
+result=unknown
+tries=0
+while [ "$tries" -lt 600 ]; do
+	result=$(secure GET "/v1/jobs/$job" | field state)
+	case "$result" in done | failed | cancelled) break ;; esac
+	tries=$((tries + 1))
+	sleep 1
+done
+pixels=$(secure GET "/v1/images/$(secure GET "/v1/jobs/$job" | field image)" | field pixels)
+case "$result $pixels" in
+"done $expected"*) pass "21. a job over HTTPS under launchd gave the known pixels" ;;
+*) fail "21. a job over HTTPS: $result, pixels $(printf '%s' "$pixels" | cut -c1-12)" ;;
+esac
+if curl -fsS -m 5 --resolve "$secure_name:$https_port:127.0.0.1" "https://$secure_name:$https_port/v1/health" >/dev/null 2>&1; then
+	fail "21b. HTTPS was trusted without mia's authority"
+elif curl -fsS -m 5 "http://127.0.0.1:$https_port/v1/health" >/dev/null 2>&1; then
+	fail "21b. the HTTPS port answered plain HTTP"
+else
+	pass "21b. the HTTPS port needs mia's authority, and takes no plain HTTP"
+fi
+"$mia" remote off >/dev/null
+"$mia" service restart >/dev/null
+answering || true
+if curl -fsS -m 5 -k "https://127.0.0.1:$https_port/v1/health" >/dev/null 2>&1; then fail "21c. turning it off left HTTPS listening"; else pass "21c. turning it off stopped HTTPS"; fi
+
 "$mia" service uninstall >/dev/null
 agent=""
 sleep 1
