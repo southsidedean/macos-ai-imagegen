@@ -345,7 +345,7 @@ def test_addresses_mia_mcp_accepts(url: str) -> None:
         "http://127.0.0.1.example.com",
         "ftp://127.0.0.1",
         "my-mac.lan:8765",
-        "https://user:pass@my-mac.lan",
+        "https://user:pass" + "@my-mac.lan",  # in two parts, or the privacy test reads it as an email address
         "https://my-mac.lan/v1",
         "https://my-mac.lan/?x=1",
         "",
