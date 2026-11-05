@@ -1,11 +1,11 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-11-04)
 
 Scripts and other programs on your Mac can now make images, through a REST API and a queue. Reaching mia
 from another machine comes in 0.4, with HTTPS and MCP.
 
-- `mia serve` runs the API and a worker. [The API guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md)
+- `mia serve` runs the API and a worker. [The API guide](https://github.com/southsidedean/macos-ai-imagegen/blob/v0.3.0/docs/api.md)
   shows how to use it.
 - Jobs wait in a queue that survives a restart, and report progress as they run. They can be cancelled.
 - The worker is a separate process. If it dies mid-job, the API stays up, the job is marked failed with the

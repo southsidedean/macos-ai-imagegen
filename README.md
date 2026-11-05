@@ -31,7 +31,7 @@ command installs the image engine, which takes a few GB with PyTorch. `mia model
 default model's license and asks before downloading it, about 4.6 GB.
 
 ```sh
-git clone --branch v0.2.0 https://github.com/southsidedean/macos-ai-imagegen.git
+git clone --branch v0.3.0 https://github.com/southsidedean/macos-ai-imagegen.git
 cd macos-ai-imagegen
 uv sync --locked --extra engine
 uv run mia doctor
