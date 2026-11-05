@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
 ## 0.2.0 (2026-11-04)
 
 The first version that makes images, from the command line. The queue, API, MCP, and web page come
