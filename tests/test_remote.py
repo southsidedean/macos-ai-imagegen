@@ -44,8 +44,13 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "ARRIVAL_SECONDS", ARRIVAL)
 
 
+def floored(context: ssl.SSLContext) -> ssl.SSLContext:
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def client_context(authority: Path | None = None) -> ssl.SSLContext:
-    return ssl.create_default_context(cafile=str(authority or remote.authority_file()))
+    return floored(ssl.create_default_context(cafile=str(authority or remote.authority_file())))
 
 
 def judged(client: ssl.SSLContext, certificate: Path, key: Path, host: str) -> None:
@@ -453,7 +458,7 @@ def test_tls_1_2_is_refused(running: Running) -> None:
 
 def test_a_client_that_doesnt_trust_it_ends_the_connection_and_mia_carries_on(running: Running) -> None:
     with pytest.raises(ssl.SSLCertVerificationError):
-        secure_socket(running.port, ssl.create_default_context())
+        secure_socket(running.port, floored(ssl.create_default_context()))
     with secure_socket(running.port) as held:
         assert ask(held)[0] == 200
 
@@ -655,7 +660,7 @@ def test_on_uses_the_macs_own_name_and_address_when_given_none(monkeypatch: pyte
     monkeypatch.setattr(remote, "suggested_names", lambda: ["my-mac.local"])
     monkeypatch.setattr(remote, "suggested_addresses", lambda: [ADDRESS])
     assert cli.main(["remote", "on"]) == 0
-    printed = capsys.readouterr().out
+    printed = [line.strip() for line in capsys.readouterr().out.splitlines()]
     assert "https://my-mac.local:8766" in printed and f"https://{ADDRESS}:8766" in printed
     assert remote.fingerprint() in printed
 
@@ -685,8 +690,8 @@ def test_status_says_off_and_on(capsys: pytest.CaptureFixture[str]) -> None:
         remote.turn_on([NAME], [], port=port)
         capsys.readouterr()
         assert cli.main(["remote", "status"]) == 0
-        printed = capsys.readouterr().out
-        assert f"https://{NAME}:{port}" in printed and "not listening" in printed and remote.fingerprint() in printed
+        printed = capsys.readouterr().out.splitlines()
+        assert printed[0] == f"on, at https://{NAME}:{port}" and printed[1].startswith("not listening") and remote.fingerprint() in printed[-1]
         probe.listen()
         assert cli.main(["remote", "status"]) == 0
         assert "listening now" in capsys.readouterr().out
