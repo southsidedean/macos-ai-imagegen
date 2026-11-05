@@ -9,8 +9,8 @@ repository.
 models, FLUX first, through a web page, a REST API, an MCP server, and a command.
 
 `PLAN.md` holds every decision, the roadmap to 1.0, and the CI rules. Read it
-before starting work, and update it in the same pull request when a decision changes. 0.2 is in
-progress, and makes images from the command line. `docs/roadmap.md` is the
+before starting work, and update it in the same pull request when a decision changes. 0.2.0 is
+released, and makes images from the command line; 0.3 brings the queue and API. `docs/roadmap.md` is the
 status page, and every pull request that starts, finishes, or changes a roadmap item updates it (a
 test checks that it names the version the code is at).
 
@@ -60,6 +60,8 @@ uv run mia generate "a red fox"        # MIA_ENGINE=fake needs no model or ML pa
 ## Rules for code
 
 - Keep direct dependencies few, and give each a reason. Runtime dependencies come from the lockfile.
+- When checking what a package supports, ask for this machine's real platform, and check PyPI for what's
+  newest. A forced generic Mac platform once picked old versions, and mia nearly shipped six releases behind.
 - Pin Hugging Face models to a commit, and engines and MLX to exact versions. MLX decides the pixels:
   moving it means looking at a new image and updating `scripts/real-engine.sh`.
 - `.home` in code reads as a host name to `tests/test_privacy.py`: say `.folder`.

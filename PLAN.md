@@ -1,7 +1,7 @@
 # Plan: mia, an AI image generation stack for macOS
 
-Status: written on 2026-11-04. 0.1 is done, without a release of its own (decided 2026-11-04), so
-0.2 is the first release; `docs/roadmap.md` has where each release stands. Facts about outside projects were checked on that date and are listed under
+Status: written on 2026-11-04. 0.1 had no release of its own (decided 2026-11-04), and 0.2.0 is the
+first release; `docs/roadmap.md` has where each release stands. Facts about outside projects were checked on that date and are listed under
 [Sources](#sources). [The spike results](#spike-results-so-far) say what's been tested on a real Mac,
 and what hasn't.
 
