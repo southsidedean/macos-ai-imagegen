@@ -47,7 +47,7 @@ direct way to use whichever open model you find on Hugging Face.
 | Language and tools | Python, with `uv` and a committed lockfile with hashes: the ML dependency tree is large, and it has to be repeatable. uv also picks a Python version the ML packages support, whatever the system's newest Python is. |
 | Web framework | FastAPI, so the API's OpenAPI document and its validation come from one set of types. kia and ok3d use only the standard library, but mia can't, since its engines need large dependencies anyway. Direct dependencies stay few, and each needs a reason. |
 | MCP library | The official Python SDK, in the same server process as the API, rather than a handwritten server like kia's. The 2026-07-28 revision changed the protocol's core (it's now stateless), and the SDK should carry that kind of change for us. Version 2 of the SDK, with its `MCPServer` API, is the one to use; it answers both `2026-07-28` clients and older ones. |
-| Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. The worker keeps a model loaded between jobs, with MLX's cache capped at 2 GB, which was both the fastest and the steadiest way to run. Cancel takes effect at the next step, and a job that won't stop is killed along with the worker, which then restarts. |
+| Processes | Two. `mia serve` runs the API, MCP, and web page. `mia worker` is the only process that loads a model. A crash or out-of-memory kill in the worker can't take the API down, the API never imports the ML packages, and restarting the worker is the sure way to hand its memory back. The worker keeps a model loaded between jobs, with MLX's cache capped at 2 GB, which was both the fastest and the steadiest way to run. Cancel takes effect at the next step, and a job still running 60 seconds later is killed along with the worker, which then restarts. In 0.3, `mia serve` starts and watches the worker itself; the two launchd agents replace that in 0.4. `mia generate` and the worker share a lock on the GPU, so only one model is ever loaded. |
 | Queue and history | One SQLite database, with images as PNG files beside it. History arrives in 0.2 and the queue in 0.3. One job runs at a time, because one model already uses most of the Mac's memory. Queued jobs survive a restart. A job that was running when the worker died is marked failed, with the reason, and isn't retried on its own. |
 | Asynchronous by default | Submitting a request returns a job right away. Generation can take minutes, longer than HTTP and MCP clients usually wait, so a client submits, then polls, streams progress, or asks to wait a limited time. |
 | Reproducible | Each image records its prompt, seed, size, steps, engine and MLX versions, and model revision. Hugging Face models are pinned to a commit, so "make it again" means the same weights. |
@@ -150,14 +150,14 @@ GET    /v1/jobs/{id}/events      progress as server-sent events
 DELETE /v1/jobs/{id}             cancel
 GET    /v1/images                history, with search
 GET    /v1/images/{id}           settings and links
-GET    /v1/images/{id}/file      PNG (?size= for a smaller copy)
+GET    /v1/images/{id}/file      PNG (a smaller copy, ?size=, comes with MCP's previews in 0.4)
 DELETE /v1/images/{id}           delete, which needs the admin scope
 GET    /v1/models                installed models and the catalog
-POST   /v1/models/inspect        what adding a repository would do; changes nothing
-POST   /v1/models                add one, as a job
-DELETE /v1/models/{id}           remove one
+POST   /v1/models/inspect        what adding a repository would do; changes nothing (0.6)
+POST   /v1/models                add one, as a job (0.6)
+DELETE /v1/models/{id}           remove one (0.6)
 GET    /v1/health                liveness and version, no token needed, nothing private
-GET    /v1/status                queue, memory, disk, loaded model
+GET    /v1/status                the worker, the queue, and free disk
 ```
 
 An OpenAI-style `/v1/images/generations` endpoint is a possible later addition, so existing tools
@@ -255,9 +255,10 @@ Workflows, adapted from ok3d and kia:
     engine;
   - `pytest (macOS)` on Apple Silicon, with the real engine's packages installed and checked for fit;
   - `uv lock --check` and a dependency vulnerability scan (pip-audit);
-  - joining in the releases that bring what they check: launchd plist generation and install scripts
-    (0.4), and a smoke test that starts the service with the fake engine and walks a job through the
-    API and MCP (0.3 and 0.4).
+  - a smoke test in `tests/test_smoke.py` that starts the real server and worker with the fake engine,
+    walks a job through the API, and kills the worker mid-job;
+  - joining in 0.4, which brings what they check: launchd plist generation and install scripts, and MCP
+    in that smoke test.
 - `codeql.yml`, `dependency-review.yml`, and `scorecard.yml`, as in ok3d.
 - `release.yml`: on a tag, checks that it's signed and matches the code's version, builds the package,
   attests it, and publishes a release with an SBOM and notes from `CHANGELOG.md`.
@@ -392,7 +393,23 @@ GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as b
   421. Open SDK issues cover parts of the new revision, so it's pinned and tried with real clients
   in 0.4. Which clients need an older revision or support Tasks is still unknown.
 
-Still open: real MCP clients, FLUX.1 dev, and cancel timing with the cache capped.
+Still open: real MCP clients, FLUX.1 dev, and the default cache against the capped one on the shipped versions.
+
+### What 0.4 has to fix first
+
+An independent review of 0.3 found no way past a token. These are its findings that don't matter while the API
+listens only on the Mac, and do once it doesn't:
+
+- Idle connections need a time limit and a cap. Today a local process can hold many open with no token, and the
+  raised open-file limit only makes that harder. uvicorn's keep-alive timeout doesn't cover a connection that
+  hasn't sent its first request.
+- Failed sign-ins aren't limited, and each one opens the database.
+- The body is read before the token is checked. It's capped at 64 KB, but it's still work done for strangers.
+- All tokens share one queue and history, and don't expire. That suits one household, and the docs say so. Decide
+  whether remote access changes that.
+- A job has no time limit, so an engine that hangs without a cancel holds the queue.
+- The web page's cookies in 0.5 need `Sec-Fetch-Site` checks and CSRF protection, because the Guard allows a
+  missing `Origin`, safe today only because tokens are header-only.
 
 ## Risks
 

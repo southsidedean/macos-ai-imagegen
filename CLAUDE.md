@@ -21,14 +21,22 @@ formats, or depend on it.
 
 This is the design from `PLAN.md`; these parts arrive release by release.
 
-- `mia serve` runs the REST API, the MCP server, and the web page. It never imports an ML package.
+- `mia serve` runs the REST API (`server.py`), and later the MCP server and the web page. It never imports an
+  ML package, and a test checks that. `supervisor.py` is a thread in it that starts the worker, restarts it,
+  and records what a dead one left behind.
 - `mia worker` is the only process that loads a model. It runs one job at a time, runs offline
   (`HF_HUB_OFFLINE=1`), and may crash or be killed without taking the API down. It keeps the model
   loaded with MLX's cache capped (`mx.set_cache_limit`): the default cache made jobs slow and uneven.
 - mflux's step callback fires before MLX computes that step, so a callback means a step has started,
   not finished.
-- They share one SQLite database, with images as files beside it, under `MIA_HOME` (by default
-  `~/Library/Application Support/mia/`).
+- They share one SQLite database (`db.py`, migrations only ever added to the end), with images as files beside
+  it, under `MIA_HOME` (by default `~/Library/Application Support/mia/`). Anything a worker knows is there, so
+  it can be killed at any moment. `gpu.py` is a flock that lets only one process hold a model.
+- `tests/test_smoke.py` runs the real server and worker as processes. `tests/test_server.py` walks the app's
+  routes to prove each needs a token, so a public route has to be named there.
+- Only end a job marked running while holding the GPU (`gpu.hold`), which proves no worker has it. The fake engine
+  swallows interrupts as mflux's step loop does: keep it matching, or the tests pass on behaviour mflux doesn't have.
+- FastAPI reads annotations at runtime, so `server.py` can't use `from __future__ import annotations`.
 - Engines sit behind one interface: mflux (MLX) by default, diffusers (MPS) as an optional extra, and
   a fake engine for tests. Engine-specific code stays in its adapter, because mflux's API moves.
 - Requests are asynchronous: submit, then poll or stream. Generation takes minutes, so don't add a

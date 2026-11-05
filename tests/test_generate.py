@@ -176,6 +176,11 @@ def test_stopping_exits_130_and_says_so(capsys: pytest.CaptureFixture[str], monk
     assert "no image was kept" in capsys.readouterr().err
 
 
+def test_zero_steps_is_refused_not_replaced(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["generate", "x", "--steps", "0"]) == 1
+    assert "steps" in capsys.readouterr().err
+
+
 def test_a_real_model_must_be_downloaded_first(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MIA_ENGINE")
     assert cli.main(["generate", "x"]) == 1
@@ -189,6 +194,21 @@ def test_history_lists_newest_first(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["history"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith(newer.id) and lines[0].endswith("second")
+
+
+def test_history_doesnt_let_a_prompt_drive_the_terminal(capsys: pytest.CaptureFixture[str]) -> None:
+    generate(Request("a fox\x1b[2J\x07 in snow\nnext", 1, 512, 512, 1), catalog.DEFAULT, FakeEngine())
+    assert cli.main(["history"]) == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\x07" not in out
+    assert "a fox\\x1b[2J\\x07 in snow\\nnext" in out
+    assert len(out.splitlines()) == 1
+
+
+def test_a_relative_output_is_recorded_as_a_full_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    record = generate(REQUEST, catalog.DEFAULT, FakeEngine(), Path("out.png"))
+    assert Path(record.file).is_absolute() and Path(record.file).exists()
 
 
 def test_a_history_from_a_newer_mia_is_refused() -> None:

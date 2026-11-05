@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
 
-from mia import __version__, catalog, doctor, history, models, paths
+from mia import __version__, catalog, doctor, gpu, history, models, paths, tokens
 from mia.engine import Cancelled, MiaError, Request, random_seed
 from mia.generate import again, generate, load_engine
 
@@ -38,11 +38,12 @@ def _generate(args: argparse.Namespace) -> int:
             raise MiaError("say what to make: mia generate \"a red fox in the snow\"")
         model = catalog.find(args.model)
         seed = random_seed() if args.seed is None else args.seed
-        request = Request(args.prompt, seed, args.width, args.height, args.steps or model.steps)
+        request = Request(args.prompt, seed, args.width, args.height, model.steps if args.steps is None else args.steps)
     print(f"{model.title}, seed {request.seed}, {request.width} by {request.height}, {request.steps} steps", file=sys.stderr)
-    engine = load_engine(model)
-    start = time.perf_counter()
-    record = generate(request, model, engine, args.output, _progress)
+    with gpu.hold():
+        engine = load_engine(model)
+        start = time.perf_counter()
+        record = generate(request, model, engine, args.output, _progress)
     print(f"{record.id}: done in {time.perf_counter() - start:.0f} seconds", file=sys.stderr)
     print(record.file)
     if args.again:
@@ -85,9 +86,30 @@ def _models_pull(args: argparse.Namespace) -> int:
     return 0
 
 
+def _printable(text: str) -> str:
+    """Control characters written out: a prompt can come from another device, and mustn't drive this terminal."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape", "replace").decode() for c in text)
+
+
 def _history() -> int:
     for record in history.recent(paths.history_file()):
-        print(f"{record.id}  {record.created}  {record.model}  seed {record.seed}  {record.prompt}")
+        print(f"{record.id}  {record.created}  {record.model}  seed {record.seed}  {_printable(record.prompt)}")
+    return 0
+
+
+def _token(args: argparse.Namespace) -> int:
+    if args.action == "create":
+        issued = tokens.create(args.device, args.scope)
+        print(f"A {args.scope} token for {args.device}. It won't be shown again:", file=sys.stderr)
+        print(issued)
+    elif args.action == "revoke":
+        tokens.revoke(args.device)
+        print(f"Revoked the token for {args.device}.")
+    else:
+        for device in tokens.devices():
+            used = "never used" if device.last_used is None else "used " + time.strftime("%Y-%m-%d", time.localtime(device.last_used))
+            state = f"revoked {device.revoked}" if device.revoked else used
+            print(f"{device.name}  {device.scope}  {state}")
     return 0
 
 
@@ -111,6 +133,18 @@ def _parser() -> argparse.ArgumentParser:
     pull.add_argument("model", nargs="?", default=catalog.DEFAULT.id, help="default: %(default)s")
     pull.add_argument("--yes", action="store_true", help="don't ask first")
     commands.add_parser("history", help="recent images, with their prompts")
+    serve = commands.add_parser("serve", help="run the REST API and a worker, on this Mac only")
+    serve.add_argument("--port", type=int, default=8765, help="default: %(default)s")
+    worker = commands.add_parser("worker", help="run jobs from the queue; mia serve starts this itself")
+    worker.add_argument("--parent", type=int, help=argparse.SUPPRESS)
+    device = commands.add_parser("token", help="the tokens that devices use with the API")
+    actions = device.add_subparsers(dest="action")
+    create = actions.add_parser("create", help="make a token, shown once")
+    create.add_argument("--for", dest="device", required=True, metavar="NAME", help="the device it's for")
+    create.add_argument("--scope", choices=tokens.SCOPES, default=tokens.GENERATE, help="default: %(default)s")
+    actions.add_parser("list", help="the devices with tokens; the same as no action")
+    revoke = actions.add_parser("revoke", help="stop a device's token working")
+    revoke.add_argument("device", metavar="NAME")
     return parser
 
 
@@ -123,6 +157,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _generate(args)
         if args.command == "history":
             return _history()
+        if args.command == "token":
+            return _token(args)
+        if args.command == "serve":
+            from mia.server import serve
+
+            return serve(args.port)
+        if args.command == "worker":
+            from mia.worker import run
+
+            return run(args.parent)
         return _models_pull(args) if args.action == "pull" else _models_list()
     except (Cancelled, KeyboardInterrupt) as stopped:
         print(f"Stopped, and no image was kept. {stopped}".strip(), file=sys.stderr)
