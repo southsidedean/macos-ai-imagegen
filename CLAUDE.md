@@ -95,8 +95,11 @@ never as open.
   line.
 - Independent reviews: the brief says no spot checks, every file in scope read in full, and a coverage
   table first.
-- Releases: user-facing changes go under the next version in `CHANGELOG.md`, marked unreleased.
-  Release tags are signed; confirm with `git tag -v` before pushing one.
+- Releases: user-facing changes go under the next version in `CHANGELOG.md`, marked unreleased. Run
+  `scripts/real-engine.sh`, then a release pull request sets `src/mia/__init__.py`, the changelog's date,
+  the roadmap, and the README's `git clone --branch`. Then a signed `git tag -a vX.Y.Z` (confirm with
+  `git tag -v`, and tags can't be moved once pushed); `release.yml` publishes it. Then a "Start X.Y.Z.dev0"
+  pull request moves the version, changelog, and roadmap on.
 
 ## Claude assets
 

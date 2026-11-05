@@ -259,8 +259,8 @@ Workflows, adapted from ok3d and kia:
     (0.4), and a smoke test that starts the service with the fake engine and walks a job through the
     API and MCP (0.3 and 0.4).
 - `codeql.yml`, `dependency-review.yml`, and `scorecard.yml`, as in ok3d.
-- `release.yml`, added with the first release: on a signed tag, builds the package, attests it, and
-  attaches an SBOM.
+- `release.yml`: on a tag, checks that it's signed and matches the code's version, builds the package,
+  attests it, and publishes a release with an SBOM and notes from `CHANGELOG.md`.
 
 Rules carried over:
 
