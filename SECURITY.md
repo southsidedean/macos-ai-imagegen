@@ -30,6 +30,8 @@ Working today, and tested:
   needs a token, and only in the `Authorization` header. It's checked before a request's body is read, and a test walks the app's routes to
   prove each needs one. Each device has its own, with its own permissions, stored only as a hash and shown once.
   You can revoke one without touching the others, and give one an end date.
+- `mia web` copies a token it has just made to the clipboard, where programs you run can read it, and Universal Clipboard can pass it
+  to your other Apple devices. Copy something else once you've signed in.
 - The web page runs under a strict content security policy: only its own files, and nothing inline. It adds prompts only as text,
   so a prompt can't run as code, and a test checks both. It keeps no token.
 - A browser swaps its token for a session cookie that scripts on a page can't read, and keeps no token. The session is stored only

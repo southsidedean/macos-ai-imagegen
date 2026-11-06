@@ -1,12 +1,14 @@
-"""The mia command. Only `token create` prints a secret, once, and only `history` prints prompts back."""
+"""The mia command. Only `token create` and `web` print a secret, once, and only `history` prints prompts back."""
 
 from __future__ import annotations
 
 import argparse
 import os
 import signal
+import subprocess
 import sys
 import time
+import webbrowser
 from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
@@ -16,6 +18,8 @@ from mia.engine import Cancelled, MiaError, Request, random_seed
 from mia.generate import again, generate, load_engine
 
 SIZE = 1024
+PORT = 8765
+WEB_DEVICE = "browser"  # the token mia web makes
 EXIT_STOPPED = 130  # the shell's usual code for a job stopped by Ctrl-C
 
 
@@ -117,6 +121,39 @@ def _token(args: argparse.Namespace) -> int:
     return 0
 
 
+def _copy(text: str) -> bool:
+    """To the Mac's clipboard, where it can be pasted, and reach a phone through Universal Clipboard. Printing it is enough elsewhere."""
+    try:
+        subprocess.run(["pbcopy"], input=text.encode(), check=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def _web(args: argparse.Namespace) -> int:
+    """A token can't be shown twice, as only its hash is kept. So this makes one the first time, and after that only opens the page."""
+    from mia import service
+
+    current = next((device for device in tokens.devices() if device.name == WEB_DEVICE and device.revoked is None), None)
+    if current is not None and not args.new and tokens.still_active(current.id):
+        print(f"The token for {WEB_DEVICE} was shown when it was made. If a browser needs it and it's lost, run mia web --new.", file=sys.stderr)
+    else:
+        if current is not None:
+            tokens.revoke(WEB_DEVICE)
+        issued = tokens.create(WEB_DEVICE, args.scope)
+        copied = " and it's on your clipboard" if _copy(issued) else ""
+        print(f"A {args.scope} token for {WEB_DEVICE}. It won't be shown again{copied}. Paste it into the page to sign in:", file=sys.stderr)
+        print(issued)
+    port = args.port or service.installed_port() or PORT
+    address = f"http://127.0.0.1:{port}"
+    if service.running_version(port) is None:
+        print(f"mia isn't answering at {address}. Start it with mia serve or mia service install, then run mia web again.", file=sys.stderr)
+        return 1
+    print(f"Opening {address}", file=sys.stderr)
+    webbrowser.open(address)
+    return 0
+
+
 def _service(args: argparse.Namespace) -> int:
     from mia import service
 
@@ -213,7 +250,12 @@ def _parser() -> argparse.ArgumentParser:
     pull.add_argument("--yes", action="store_true", help="don't ask first")
     commands.add_parser("history", help="recent images, with their prompts")
     serve = commands.add_parser("serve", help="run the REST API, MCP, and a worker")
-    serve.add_argument("--port", type=int, default=8765, help="default: %(default)s")
+    serve.add_argument("--port", type=int, default=PORT, help="default: %(default)s")
+    page = commands.add_parser("web", help="open the web page, making a token to sign in with the first time")
+    page.add_argument("--new", action="store_true", help="replace the token, if the old one is lost")
+    # Whoever runs this is at the Mac, and can delete these files anyway.
+    page.add_argument("--scope", choices=tokens.SCOPES, default=tokens.ADMIN, help="for a new token; default: %(default)s")
+    page.add_argument("--port", type=int, help="where mia serve is, if it isn't the service's or the usual port")
     keeper = commands.add_parser("service", help="keep mia serve running, starting at login")
     steps = keeper.add_subparsers(dest="action")
     setup = steps.add_parser("install", help="start it now and at every login; installing again replaces it")
@@ -265,6 +307,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             from mia.server import serve
 
             return serve(args.port)
+        if args.command == "web":
+            return _web(args)
         if args.command == "service":
             return _service(args)
         if args.command == "remote":

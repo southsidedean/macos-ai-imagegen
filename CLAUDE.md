@@ -70,6 +70,7 @@ scripts/real-engine.sh                 # real generation, by hand, on Apple Sili
 uv run mia doctor                      # is this machine ready? changes nothing
 uv run mia models pull                 # download the default model
 uv run mia generate "a red fox"        # MIA_ENGINE=fake needs no model or ML packages
+uv run mia web                         # open the page, with a token the first time
 ```
 
 - Don't run `ruff format`: as in the other repositories, ruff only lints.

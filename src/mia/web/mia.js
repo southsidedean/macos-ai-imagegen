@@ -6,6 +6,8 @@ const PAGE_SIZE = 24;
 const POLL_BUSY = 5000, POLL_IDLE = 30000; // milliseconds. A running job's progress comes from its event stream
 const THUMB_RETRY = 30000, THUMB_RETRIES = 2; // a page of pictures can reach the limit on requests, which lasts a minute
 const FORM_KEY = "mia.form";
+const MIN_FREE = 2 * 1024 ** 3; // below this, the server refuses new jobs
+const COPIED_FOR = 2000;
 const SEEDS = 2 ** 32; // seeds run from 0 to one less than this
 const FAILED_SHOWN = 3, FAILED_FOR = 3600000; // a job that failed stays listed for an hour, in case nobody was looking
 
@@ -13,7 +15,7 @@ const $ = (id) => document.getElementById(id);
 
 let me = null; // the signed-in device
 let models = [];
-let shownImages = 0;
+let listed = []; // what the gallery shows, in order, for moving between pictures
 let knownDone = null; // jobs already finished, to spot new pictures, including another device's
 let stream = null; // one at a time: a browser has about six connections to a host, and mia speaks HTTP/1.1
 let pollTimer = null;
@@ -86,7 +88,7 @@ function signedOut(message = "") {
   $("queue").replaceChildren();
   hideLatest();
   knownDone = null;
-  shownImages = 0;
+  listed = [];
   show("sign-in-problem", message);
 }
 
@@ -348,6 +350,13 @@ function watch(job) {
   source.addEventListener("error", closeStream);
 }
 
+function showStatus({ worker, disk_free_bytes: free }) {
+  const low = free !== null && free < MIN_FREE;
+  const disk = free === null ? "" : low ? "Nearly out of disk space, so new pictures are refused." : `${Math.round(free / 1e9)} GB free.`;
+  $("status").textContent = `${worker.running ? "Worker running." : "The worker isn't running."} ${disk}`.trim();
+  $("status").classList.toggle("problem", low || !worker.running);
+}
+
 async function noteNewImages(jobs) {
   const done = jobs.filter((job) => job.state === "done" && job.image);
   const fresh = knownDone === null ? [] : done.filter((job) => !knownDone.has(job.id));
@@ -362,7 +371,7 @@ async function noteNewImages(jobs) {
   if ($("search").value) return; // it may not match, and the gallery is showing what was asked for
   for (const image of images) {
     $("images").prepend(thumbnail(image));
-    shownImages += 1;
+    listed.unshift(image);
   }
   $("images-empty").hidden = true;
 }
@@ -393,8 +402,9 @@ async function poll() {
   if (!me) return;
   let wait = POLL_IDLE;
   try {
-    const { jobs } = await api("GET", "/v1/jobs?limit=20");
+    const [{ jobs }, status] = await Promise.all([api("GET", "/v1/jobs?limit=20"), api("GET", "/v1/status")]);
     if (!me) return;
+    showStatus(status);
     const active = showJobs(jobs);
     const running = active.find((job) => job.state === "running");
     // Polling carries on in the background, so the tab's title can say when a picture is done, and the browser slows it down.
@@ -432,19 +442,19 @@ function thumbnail(image) {
 
 async function loadImages(fresh) {
   const search = $("search").value;
-  const offset = fresh ? 0 : shownImages;
+  const offset = fresh ? 0 : listed.length;
   const query = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset), search });
   try {
     const { images } = await api("GET", `/v1/images?${query}`);
     if (search !== $("search").value) return; // something newer was typed while this was on its way
     if (fresh) {
       $("images").replaceChildren();
-      shownImages = 0;
+      listed = [];
     }
     $("images").append(...images.map(thumbnail));
-    shownImages += images.length;
+    listed.push(...images);
     $("more").hidden = images.length < PAGE_SIZE;
-    show("images-empty", shownImages ? "" : search ? "No pictures match that search." : "No pictures yet. The ones you make will appear here.");
+    show("images-empty", listed.length ? "" : search ? "No pictures match that search." : "No pictures yet. The ones you make will appear here.");
   } catch (problem) {
     if (me) show("notice", problem.message);
   }
@@ -468,10 +478,36 @@ function openImage(image) {
     element("dd", { textContent: String(value) }),
   ]));
   $("detail-file").href = image.links.file;
+  $("detail-download").href = image.links.file;
+  $("detail-download").download = `mia-${image.id}.png`;
+  $("detail-copy").textContent = "Copy prompt";
+  // The picture just finished may not be in the list, if a search is hiding it.
+  const at = listed.findIndex((known) => known.id === image.id);
+  $("detail-previous").disabled = at <= 0;
+  $("detail-next").disabled = at < 0 || (at === listed.length - 1 && $("more").hidden);
   $("detail-delete").textContent = "Delete";
   $("detail-delete").dataset.sure = "";
   show("detail-problem", "");
-  $("detail").showModal();
+  if (!$("detail").open) $("detail").showModal();
+}
+
+async function move(by) {
+  const at = listed.findIndex((known) => known.id === opened.id);
+  if (at < 0) return;
+  if (at + by >= listed.length && !$("more").hidden) await loadImages(false);
+  const next = listed[at + by];
+  if (next) openImage(next);
+}
+
+async function copyPrompt() {
+  try {
+    await navigator.clipboard.writeText(opened.prompt);
+  } catch {
+    show("detail-problem", "This browser wouldn't copy it. You can select the prompt above instead.");
+    return;
+  }
+  $("detail-copy").textContent = "Copied";
+  setTimeout(() => { $("detail-copy").textContent = "Copy prompt"; }, COPIED_FOR);
 }
 
 async function remove() {
@@ -489,7 +525,7 @@ async function remove() {
   }
   const item = document.querySelector(`[data-image="${opened.id}"]`);
   if (item) item.remove();
-  shownImages -= 1;
+  listed = listed.filter((known) => known.id !== opened.id);
   if (latest && latest.id === opened.id) hideLatest();
   $("detail").close();
 }
@@ -517,6 +553,19 @@ function listen() {
   });
   $("more").addEventListener("click", () => loadImages(false));
   $("detail-close").addEventListener("click", () => $("detail").close());
+  $("detail-previous").addEventListener("click", () => move(-1));
+  $("detail-next").addEventListener("click", () => move(1));
+  $("detail-copy").addEventListener("click", copyPrompt);
+  $("detail").addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") move(-1);
+    if (event.key === "ArrowRight") move(1);
+  });
+  $("prompt").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      $("generate").requestSubmit();
+    }
+  });
   $("detail-reuse").addEventListener("click", () => reuse(opened));
   $("detail-delete").addEventListener("click", remove);
   $("detail").addEventListener("close", () => { $("detail-image").removeAttribute("src"); });

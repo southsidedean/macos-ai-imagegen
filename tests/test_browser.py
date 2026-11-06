@@ -20,8 +20,11 @@ from typing import Any, cast
 
 import pytest
 from selenium import webdriver
-from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException, WebDriverException
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.ui import Select, WebDriverWait
@@ -107,10 +110,21 @@ class Page:
         self.driver.execute_script("arguments[0].click()", self.find(element_id))
 
     def sign_in(self, token: str) -> None:
-        self.wait(lambda: self.shown("sign-in-view"))
+        try:
+            self.wait(lambda: self.shown("sign-in-view"))
+        except TimeoutException:
+            state = self.run('return [location.href, document.readyState, document.title, document.body.innerText.slice(0, 300)]')
+            raise AssertionError(f"no sign-in form: {state}") from None
         self.type("token", token)
         self.click_submit("sign-in-form")
-        self.wait(lambda: self.shown("main-view"))
+        try:
+            self.wait(lambda: self.shown("main-view"))
+        except TimeoutException:
+            state = self.run(
+                'return [document.getElementById("token").value.length, document.getElementById("sign-in-problem").textContent,'
+                " document.body.innerText.slice(0, 200)]"
+            )
+            raise AssertionError(f"not signed in, with a token of {len(token)} characters: {state}") from None
 
     def click_submit(self, form_id: str) -> None:
         self.driver.execute_script("arguments[0].requestSubmit()", self.find(form_id))
@@ -295,6 +309,114 @@ def test_a_damaged_memory_of_the_form_is_ignored(browser: WebDriver, service: Se
     page.wait(lambda: page.find("model").get_attribute("value"))
     assert Select(page.find("size")).first_selected_option.get_attribute("value") == "1024x1024"
     assert Select(page.find("count")).first_selected_option.get_attribute("value") == "1"
+
+
+def test_on_a_wide_screen_the_gallery_sits_at_the_top_until_a_picture_finishes(browser: WebDriver, service: Service) -> None:
+    def top(element_id: str) -> float:
+        return float(browser.execute_script("return arguments[0].getBoundingClientRect().top", page.find(element_id)))
+
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    assert abs(top("gallery-title") - top("compose")) < 30
+    page.type("prompt", "a fox")
+    Select(page.find("size")).select_by_value("512x512")
+    page.click_submit("generate")
+    page.wait(lambda: page.shown("latest"), seconds=30)
+    assert abs(top("latest") - top("compose")) < 30
+    assert top("gallery-title") > top("latest") + 100
+    page.click("latest-dismiss")
+    assert abs(top("gallery-title") - top("compose")) < 30
+
+
+def open_first_picture(page: Page) -> None:
+    page.wait(page.thumbnails)
+    page.driver.execute_script("arguments[0].click()", page.thumbnails()[0])
+    page.wait(lambda: page.shown("detail"))
+
+
+def test_moving_between_pictures_with_buttons_and_keys(browser: WebDriver, service: Service) -> None:
+    for name in ("oldest", "middle", "newest"):
+        made(service, name)
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: len(page.thumbnails()) == 3)
+    open_first_picture(page)
+    assert page.find("detail-prompt").text == "newest"
+    assert not page.find("detail-previous").is_enabled()
+    page.click("detail-next")
+    page.wait(lambda: page.find("detail-prompt").text == "middle")
+    page.find("detail").send_keys(Keys.ARROW_RIGHT)
+    page.wait(lambda: page.find("detail-prompt").text == "oldest")
+    assert not page.find("detail-next").is_enabled()
+    page.find("detail").send_keys(Keys.ARROW_RIGHT)  # the end: it stays
+    assert page.find("detail-prompt").text == "oldest"
+    page.find("detail").send_keys(Keys.ARROW_LEFT)
+    page.wait(lambda: page.find("detail-prompt").text == "middle")
+    page.click("detail-previous")
+    page.wait(lambda: page.find("detail-prompt").text == "newest")
+    assert page.shown("detail")
+
+
+def test_next_loads_more_at_the_end_of_the_page(browser: WebDriver, service: Service) -> None:
+    for number in range(25):
+        made(service, f"picture {number}", seed=number, steps=1)
+    page = page_for(browser, service)
+    # A token of its own: waiting for all those jobs can use up most of a token's 240 requests a minute on a slow machine.
+    page.sign_in(token_for(service, "generate"))
+    page.wait(lambda: len(page.thumbnails()) == 24)
+    assert page.shown("more")
+    browser.execute_script("arguments[0].click()", page.thumbnails()[-1])
+    page.wait(lambda: page.shown("detail"))
+    assert page.find("detail-prompt").text == "picture 1"
+    assert page.find("detail-next").is_enabled()
+    page.click("detail-next")
+    page.wait(lambda: page.find("detail-prompt").text == "picture 0")
+    assert len(page.thumbnails()) == 25 and not page.shown("more")
+    assert not page.find("detail-next").is_enabled()
+
+
+def test_a_picture_can_be_downloaded_and_its_prompt_copied(browser: WebDriver, service: Service) -> None:
+    job = made(service, "copy this")
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    open_first_picture(page)
+    link = page.find("detail-download")
+    assert link.get_attribute("download") == f"mia-{job['image']}.png"
+    assert page.fetch_status(link.get_attribute("href") or "") == 200
+    # A stand-in, as a browser may refuse a real clipboard to a test, and these tests shouldn't touch the Mac's own.
+    page.run('window.copied = []; Object.defineProperty(navigator, "clipboard", {configurable: true, value: {writeText: async (text) => { copied.push(text); }}})')
+    page.click("detail-copy")
+    page.wait(lambda: page.find("detail-copy").text == "Copied")
+    assert page.run("return window.copied") == ["copy this"]
+    page.run('Object.defineProperty(navigator, "clipboard", {value: {writeText: async () => { throw new Error("no"); }}})')
+    page.click("detail-copy")
+    page.wait(lambda: "wouldn't copy" in page.find("detail-problem").text)
+
+
+def test_command_or_control_enter_generates(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    Select(page.find("size")).select_by_value("512x512")
+    page.type("prompt", "from the keyboard")
+    # Pressed and let go of explicitly, and then reset, as the test after this one couldn't sign in on Safari.
+    page.find("prompt").click()
+    ActionChains(browser).key_down(Keys.CONTROL).send_keys(Keys.ENTER).key_up(Keys.CONTROL).perform()
+    ActionBuilder(browser).clear_actions()
+    page.wait(page.thumbnails, seconds=30)
+    assert page.find("prompt").get_attribute("value") == "from the keyboard"  # and no new line was added
+
+
+def test_the_status_line_says_how_things_stand(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: "Worker running" in page.find("status").text)
+    assert "GB free" in page.find("status").text
+    page.run('showStatus({worker: {running: false}, disk_free_bytes: 1024})')
+    text = page.find("status").text
+    assert "isn't running" in text and "Nearly out of disk" in text
+    assert "problem" in (page.find("status").get_attribute("class") or "")
 
 
 def seeds_made(service: Service) -> list[int]:
@@ -599,6 +721,8 @@ def test_a_narrow_window_switches_between_making_and_browsing(browser: WebDriver
         page.click("view-gallery")
         page.wait(page.thumbnails()[0].is_displayed)
         assert not page.shown("generate")
+        left = "return arguments[0].getBoundingClientRect().left"
+        assert browser.execute_script(left, page.find("search")) == browser.execute_script(left, page.thumbnails()[0])
         page.click("view-make")
         page.wait(lambda: page.shown("generate"))
         short = page.run("""return [...document.querySelectorAll("button, select, input, summary")]

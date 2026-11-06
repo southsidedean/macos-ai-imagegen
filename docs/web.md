@@ -4,17 +4,22 @@ Make pictures, watch the queue, and browse everything you've made, from a browse
 
 ## Start here
 
-You need mia installed and a model downloaded: the [README](../README.md) has both steps. Make a token, and start the server:
+You need mia installed and a model downloaded: the [README](../README.md) has both steps. Start the server, which keeps running
+until you stop it with Control-C. To keep it running without a window open, see [Keeping mia running](service.md).
 
 ```sh
-uv run mia token create --for my-browser
 uv run mia serve
 ```
 
-The first command prints the token once, so keep it somewhere safe. The server keeps running until you stop it, with Control-C.
-To keep it running without a window open, see [Keeping mia running](service.md).
+Then, in another window:
 
-Open <http://127.0.0.1:8765> in a browser, paste the token, and sign in. Type a prompt, and press Generate.
+```sh
+uv run mia web
+```
+
+The first time, that makes a token, shows it once, and copies it to your clipboard. It then opens the page. Paste the token, and sign
+in. Type a prompt, and press Generate. Keep the token somewhere safe if you'll want it for another browser. If it's lost,
+`uv run mia web --new` replaces it. That token can do everything, including delete pictures: add `--scope generate` for one that can't.
 
 ## On your phone
 
@@ -58,7 +63,10 @@ complains, import the file under **Settings**, **Privacy & Security**, **View Ce
   waiting one. A job that failed stays listed for an hour, with the reason.
 - **Gallery.** Pictures from every device appear here, newest first. Search looks through the prompts.
 - **One picture.** Press a picture to see its settings. **New variation** is here too. **Use these settings** copies them to the form,
-  including the seed, so Generate makes the same picture again.
+  including the seed, so Generate makes the same picture again. **Previous** and **Next**, or the arrow keys, move between pictures.
+  **Copy prompt** and **Download** do what they say.
+- **The keyboard.** In the prompt box, Command-Return or Control-Enter is the same as pressing Generate.
+- **The line under the queue** says whether the worker is running, and how much disk is free.
 - **On a narrow screen,** **Make** and **Gallery** switch between the form and the pictures.
 - **Your choices.** This browser remembers the model, size, and number of pictures you last used, but never the prompt.
 

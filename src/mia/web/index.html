@@ -48,7 +48,7 @@
         <p id="read-only" class="hint" hidden>This token can only look. Making pictures needs a token with the generate scope.</p>
         <form id="generate">
           <label for="prompt">Prompt</label>
-          <textarea id="prompt" rows="4" maxlength="4000" required placeholder="a red fox in a snowy forest at sunrise, photograph"></textarea>
+          <textarea id="prompt" rows="4" maxlength="4000" required aria-keyshortcuts="Meta+Enter Control+Enter" placeholder="a red fox in a snowy forest at sunrise, photograph"></textarea>
           <div>
             <label for="model">Model</label>
             <select id="model"></select>
@@ -113,6 +113,7 @@
         <h2 id="queue-title">Queue</h2>
         <ul id="queue" class="queue"></ul>
         <p id="queue-empty" class="hint">Nothing's waiting.</p>
+        <p id="status" class="hint status" role="status"></p>
       </section>
     </div>
 
@@ -146,15 +147,21 @@
     <div class="detail">
       <img id="detail-image" alt="">
       <div class="detail-text">
+        <div class="actions step">
+          <button id="detail-previous" type="button" class="quiet" aria-keyshortcuts="ArrowLeft">Previous</button>
+          <button id="detail-next" type="button" class="quiet" aria-keyshortcuts="ArrowRight">Next</button>
+          <button id="detail-close" type="button" class="quiet">Close</button>
+        </div>
         <p id="detail-prompt" class="detail-prompt"></p>
         <dl id="detail-settings"></dl>
         <p id="detail-problem" class="problem" role="alert" hidden></p>
         <div class="actions">
           <button id="detail-variation" type="button" class="primary">New variation</button>
           <button id="detail-reuse" type="button" class="quiet">Use these settings</button>
+          <button id="detail-copy" type="button" class="quiet">Copy prompt</button>
+          <a id="detail-download" class="button quiet">Download</a>
           <a id="detail-file" class="button quiet" target="_blank" rel="noopener">Open full size</a>
           <button id="detail-delete" type="button" class="quiet danger">Delete</button>
-          <button id="detail-close" type="button" class="quiet">Close</button>
         </div>
       </div>
     </div>

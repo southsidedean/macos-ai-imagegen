@@ -68,14 +68,21 @@ def request_bytes(path: str = "/v1/health", extra: str = "") -> bytes:
 
 def status_of_answer(held: socket.socket) -> int:
     """Reads one whole answer, as a following request can only be sent after it. Its parts can arrive separately."""
+
+    def more() -> bytes:
+        piece = held.recv(4096)
+        if not piece:  # the server hung up, which would otherwise read as nothing, for ever
+            raise ConnectionResetError("the server closed the connection")
+        return piece
+
     seen = b""
     while b"\r\n\r\n" not in seen:
-        seen += held.recv(4096)
+        seen += more()
     head, _, body = seen.partition(b"\r\n\r\n")
     length = re.search(rb"content-length: (\d+)", head, re.IGNORECASE)
     assert length is not None
     while len(body) < int(length[1]):
-        body += held.recv(4096)
+        body += more()
     return int(head.split()[1])
 
 

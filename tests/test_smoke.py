@@ -110,7 +110,8 @@ class Service:
         wait_for(lambda: self.job(job_id)["step"] >= 1)
 
     def worker_pid(self) -> int:
-        return int((self.folder / "gpu.lock").read_text())
+        # A new worker empties the file and then writes to it, so it can be read empty in between.
+        return int(wait_for(lambda: (self.folder / "gpu.lock").read_text().strip()))
 
     def stop(self) -> None:
         if self.process.poll() is None:

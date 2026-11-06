@@ -952,3 +952,99 @@ def test_a_bad_cookie_counts_as_a_refusal(api: TestClient) -> None:
     for _ in range(server.REFUSED_SIGN_INS_PER_MINUTE):
         assert api.get("/v1/jobs", headers={"Cookie": f"{server.COOKIE}={'x' * 43}", **OWN_READ}).status_code == 401
     assert api.get("/v1/jobs", headers=good).status_code == 429
+
+
+# mia web. Stand-ins for the browser and the clipboard, so a test run opens no window and leaves a token on neither.
+@pytest.fixture
+def web(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+    seen: dict[str, list[str]] = {"opened": [], "copied": []}
+
+    def copy(text: str) -> bool:
+        seen["copied"].append(text)
+        return True
+
+    monkeypatch.setattr("mia.cli.webbrowser.open", seen["opened"].append)
+    monkeypatch.setattr("mia.cli._copy", copy)
+    monkeypatch.setattr("mia.service.running_version", lambda _port: "1.2.3")
+    monkeypatch.setattr("mia.service.installed_port", lambda: None)
+    return seen
+
+
+def test_mia_web_makes_a_token_the_first_time_and_opens_the_page(web: dict[str, list[str]], capsys: pytest.CaptureFixture[str]) -> None:
+    from mia.cli import main
+
+    assert main(["web"]) == 0
+    printed = capsys.readouterr()
+    token = printed.out.strip()
+    assert (device := tokens.verify(token)) is not None and device.name == "browser" and device.scope == tokens.ADMIN
+    assert web["copied"] == [token]
+    assert "on your clipboard" in printed.err
+    assert web["opened"] == ["http://127.0.0.1:8765"]
+
+
+def test_mia_web_doesnt_replace_a_working_token(web: dict[str, list[str]], capsys: pytest.CaptureFixture[str]) -> None:
+    from mia.cli import main
+
+    assert main(["web"]) == 0
+    token = capsys.readouterr().out.strip()
+    assert main(["web"]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == "" and "mia web --new" in printed.err
+    assert tokens.verify(token) is not None
+    assert len(web["copied"]) == 1 and len(web["opened"]) == 2
+
+
+def test_mia_web_new_replaces_the_token(web: dict[str, list[str]], capsys: pytest.CaptureFixture[str]) -> None:
+    from mia.cli import main
+
+    assert main(["web"]) == 0
+    old = capsys.readouterr().out.strip()
+    assert main(["web", "--new", "--scope", "generate"]) == 0
+    new = capsys.readouterr().out.strip()
+    assert tokens.verify(old) is None
+    assert (device := tokens.verify(new)) is not None and device.scope == tokens.GENERATE
+
+
+def test_mia_web_replaces_a_token_that_ran_out(web: dict[str, list[str]], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia.cli import main
+
+    tokens.create("browser", days=1)
+    now = time.time()
+    monkeypatch.setattr("mia.tokens.time.time", lambda: now + 2 * 86400)
+    assert main(["web"]) == 0
+    assert tokens.verify(capsys.readouterr().out.strip()) is not None
+
+
+def test_mia_web_says_so_if_mia_isnt_running(web: dict[str, list[str]], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia.cli import main
+
+    monkeypatch.setattr("mia.service.running_version", lambda _port: None)
+    assert main(["web"]) == 1
+    printed = capsys.readouterr()
+    assert "mia isn't answering" in printed.err and tokens.verify(printed.out.strip()) is not None
+    assert web["opened"] == []
+
+
+def test_mia_web_finds_the_services_port_or_takes_one(web: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia.cli import main
+
+    monkeypatch.setattr("mia.service.installed_port", lambda: 9000)
+    assert main(["web"]) == 0
+    assert main(["web", "--port", "9001"]) == 0
+    assert web["opened"] == ["http://127.0.0.1:9000", "http://127.0.0.1:9001"]
+
+
+def test_mia_web_still_works_without_a_clipboard(web: dict[str, list[str]], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia.cli import main
+
+    monkeypatch.setattr("mia.cli._copy", lambda _text: False)
+    assert main(["web"]) == 0
+    printed = capsys.readouterr()
+    assert "clipboard" not in printed.err and tokens.verify(printed.out.strip()) is not None
+
+
+def test_a_missing_clipboard_tool_isnt_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mia.cli import _copy
+
+    monkeypatch.setenv("PATH", "/nonexistent")
+    assert _copy("x") is False
