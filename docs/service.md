@@ -14,7 +14,8 @@ uv run mia service status
 ```
 
 `status` should say `running` and `answering`. mia now listens on port 8765 of this Mac, as `mia serve` does, and the
-[API](api.md), [assistant](mcp.md), and [other devices](remote.md) guides work the same way. It uses the same images, history, and tokens as before.
+[web page](web.md), [API](api.md), [assistant](mcp.md), and [other devices](remote.md) guides work the same way. It uses the same
+images, history, and tokens as before.
 
 To stop it and start it again:
 

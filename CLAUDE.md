@@ -36,7 +36,8 @@ This is the design from `PLAN.md`; these parts arrive release by release.
   it, under `MIA_HOME` (by default `~/Library/Application Support/mia/`). Anything a worker knows is there, so
   it can be killed at any moment. `gpu.py` is a flock that lets only one process hold a model.
 - The page uses only the public API, and text from it only ever goes in as text. Cookies and `Sec-Fetch` headers differ between browsers,
-  so `tests/test_browser.py` runs it in real ones, when `MIA_BROWSERS` names them. Change the page, and run it.
+  so `tests/test_browser.py` runs it in real ones, when `MIA_BROWSERS` names them. Change the page, and run it. Look at it too, as tests
+  have missed layout bugs, and Safari has its own rules that only CI will show.
 - `tests/test_smoke.py` runs the real server and worker as processes. The Guard in `server.py` checks the token for
   everything but `PUBLIC`, before a body is read, and `tests/test_server.py` walks the app's routes to prove each
   also asks for one. `tests/test_connections.py` tests the connection limits over real sockets.
@@ -77,9 +78,10 @@ uv run mia web                         # open the page, with a token the first t
 - CI never runs a real model and there's no self-hosted runner. When a change touches an engine, run
   `scripts/real-engine.sh` and say in the pull request whether it passed.
 - Actions are pinned by commit, and `tests/test_repo.py` checks it. A new required check goes in
-  `main`'s branch protection in the same change.
+  the "Protect main" ruleset once it's on `main`: added sooner, it would block pull requests that don't have that job yet.
 - When piping test output, use `set -o pipefail`, so a failing test stops the chain.
-- Tests can't reach the network and have 60 seconds each, unless marked otherwise.
+- Tests can't reach the network and have 60 seconds each, unless marked otherwise. They take a free port, never 8765, which a real
+  `mia serve` may be holding.
 
 ## Rules for code
 
@@ -128,7 +130,8 @@ never as open.
   the roadmap, this file's status line, the README's `git clone --branch`, and the changelog's links, from `blob/main` to the
   tag. Then a signed `git tag -a vX.Y.Z` (confirm with
   `git tag -v`, and tags can't be moved once pushed); `release.yml` publishes it. Then a "Start X.Y.Z.dev0"
-  pull request moves the version, changelog, and roadmap on.
+  pull request moves the version, changelog, and roadmap on. For 0.5.0, the release pull request also removes the notes in the
+  README and `docs/web.md` that the page isn't in a release, and the note that the phone steps are untried.
 
 ## Claude assets
 

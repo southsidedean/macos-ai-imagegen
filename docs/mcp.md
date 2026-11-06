@@ -54,8 +54,8 @@ claude mcp add mia -e MIA_TOKEN=paste-your-token-here -- uv run --directory /pat
 ```
 
 It reads the token only from `MIA_TOKEN`. `--url` or `MIA_URL` says where the server is, by default
-`http://127.0.0.1:8765`, and `--ca` or `MIA_CA` says which certificate authority to trust. It refuses plain `http` to any other machine, because the token and your prompts would cross the
-network unprotected.
+`http://127.0.0.1:8765`, and `--ca` or `MIA_CA` says which certificate authority to trust. It refuses plain `http` to any other
+machine, because the token and your prompts would cross the network unprotected.
 
 ## Good to know
 

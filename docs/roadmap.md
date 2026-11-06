@@ -4,7 +4,8 @@ Where mia is, release by release. Every pull request updates this page when it f
 changes something here. [PLAN.md](../PLAN.md#roadmap) has the detail of each release and the reasons
 behind it.
 
-**Now:** 0.4.0 is released: it adds MCP, the launchd service, and HTTPS on your LAN. 0.5.0, the web page, is next.
+**Now:** 0.4.0 is released: it adds MCP, the launchd service, and HTTPS on your LAN. 0.5.0, the web page, is built, and has a review
+and a test from a real phone to pass before its release.
 
 | Release | What it brings | Status |
 |---|---|---|
@@ -12,8 +13,8 @@ behind it.
 | 0.2.0 | The engine, FLUX from the catalog, and `mia generate` | Released ([v0.2.0](https://github.com/southsidedean/macos-ai-imagegen/releases/tag/v0.2.0)) |
 | 0.3.0 | The queue, the REST API, and per-device tokens | Released ([v0.3.0](https://github.com/southsidedean/macos-ai-imagegen/releases/tag/v0.3.0)) |
 | 0.4.0 | MCP, the launchd service, and HTTPS on your LAN | Released ([v0.4.0](https://github.com/southsidedean/macos-ai-imagegen/releases/tag/v0.4.0)) |
-| 0.5.0 | The web page | In progress: built, waiting on the test from a real phone |
+| 0.5.0 | The web page | In progress: built, with the review and the phone test to come |
 | 0.6.0 | Any Hugging Face model, LoRAs, and diffusers as a second engine | Planned |
-| 0.7.0 | Image to image, inpainting, upscaling, and batches | Planned |
+| 0.7.0 | Image to image, inpainting, upscaling, and batches in the API and MCP | Planned |
 | 0.8.0 | An installer, signed upgrades, and backup | Planned |
 | 1.0.0 | A full independent review of every file, and fixes | Planned |

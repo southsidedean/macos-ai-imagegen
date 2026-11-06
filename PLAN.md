@@ -54,7 +54,7 @@ direct way to use whichever open model you find on Hugging Face.
 | Sleep | The worker holds a macOS power assertion (as `caffeinate -i` does) only while a job runs, so a remote request isn't cut off by idle sleep and the Mac can still sleep when idle. Waking a sleeping Mac for a request is out of scope. |
 | Service | One launchd user agent for `mia serve`, installed by `mia service install` (changed from two on 2026-11-05). The supervisor already restarts the worker, stops a stuck job, and records why a job failed, none of which launchd can do, and a second agent would have split that between two programs. A user agent means someone must be logged in; the docs say so, and cover automatic login for a Mac used as a server. |
 | Where things live | `~/Library/Application Support/mia/` by default (`MIA_HOME` moves it). The models folder has a setting of its own, so models can live on an external drive. A settings file is for later: for now, settings are environment variables and each command's options. |
-| AI integration | A ladder, as in kia: `mia doctor` with no AI at all, then your own assistant through MCP, then an AI-assisted install prompt at the top of the README. mia holds no AI provider keys and makes no calls to an LLM; the assistant you connect does its own prompt writing. |
+| AI integration | A ladder, as in kia: `mia doctor` with no AI at all, then your own assistant through MCP, then an AI-assisted install prompt at the top of the README, which isn't written yet. mia holds no AI provider keys and makes no calls to an LLM; the assistant you connect does its own prompt writing. |
 | Native app | Not before 1.0. The web page works on a phone and a laptop alike, without a separate app to build, sign, and notarize. |
 | License (decided 2026-11-04) | AGPL-3.0, as in kia, ok3d, and arr-vpn-stack. This covers mia's code. Each model has its own license. |
 
@@ -154,6 +154,9 @@ GET    /v1/images/{id}/file      PNG
 GET    /v1/images/{id}/preview   a JPEG up to 512 pixels, which the worker makes with each image
 DELETE /v1/images/{id}           delete, which needs the admin scope
 GET    /v1/models                installed models and the catalog
+POST   /v1/session               swap a token for a browser's session cookie
+GET    /v1/session               the device that's signed in
+DELETE /v1/session               sign a browser out
 POST   /v1/models/inspect        what adding a repository would do; changes nothing (0.6)
 POST   /v1/models                add one, as a job (0.6)
 DELETE /v1/models/{id}           remove one (0.6)
@@ -198,9 +201,10 @@ Choices worth recording:
 
 ### Web page
 
-A prompt box, model picker, size, and Generate, with advanced settings folded away. Beside it: the
-queue with live progress, and a gallery where any image can be reopened with its settings. It's plain
-HTML, CSS, and JavaScript, with no build step, and uses only the public API. It works on a phone.
+A prompt box, model picker, size, number of pictures, and Generate, with advanced settings folded away. Beside it: the queue with
+live progress, the picture that just finished, and a gallery where any image can be reopened with its settings. It's plain HTML, CSS,
+and JavaScript, with no build step, and uses only the public API. It's laid out for a phone, with a switch between making and browsing,
+and hasn't been tried on a real one yet.
 
 Choices worth recording:
 
@@ -222,6 +226,11 @@ Choices worth recording:
   guidance 1.0, and mflux's klein call takes no negative prompt.
 - Tests run in real browsers (decided 2026-11-06), through Selenium, which is a development dependency only: Chrome and Firefox on
   Linux, and Safari on macOS. Playwright's WebKit isn't Safari, and its browsers are downloads with no hash in the lockfile.
+- The page draws its own menus, with `appearance: none`. Safari kept native ones at its own size, whatever `min-height` said, and with
+  `appearance: menulist-button` too, so they missed the 44 pixels a finger needs. Only the Safari job showed this.
+- Once its window had been resized, no click from Safari's driver reached the page, not even as a `pointerdown`, though a click from a
+  script did. That was on a hosted runner, and the resize as the cause is inferred from the order of the tests. So the tests that
+  click for real come first, and the narrow ones click from a script. No automated test has made a real tap in a narrow window.
 
 ## Security
 
@@ -247,7 +256,7 @@ Generated images and prompts are private, and this service will take requests ov
   home server with static per-device tokens doesn't need an identity provider. If it's wanted later,
   it goes in front of mia as a gateway, as with agentgateway in kia.
 - `Origin` is checked on every request, as the MCP spec requires against DNS rebinding. The page
-  gets a strict content security policy.
+  has a strict content security policy.
 - Limits on everything: requests per token, queue length, size, steps, batch count, prompt
   length, and uploads.
 - Uploaded images are untrusted. They're checked for type and pixel count before decoding, and
@@ -256,6 +265,24 @@ Generated images and prompts are private, and this service will take requests ov
   into every image's EXIF and XMP data, so mia strips all of it by default (decided 2026-11-04),
   and a test proves it. Prompts and settings stay in mia's database, so any image can still be made
   again. A setting can write a small record with no paths into the PNG.
+
+### Browser sessions
+
+Decided on 2026-11-06, for the web page in 0.5. `<img>` and `EventSource` can't send an `Authorization` header, and a token kept
+in the browser could be read by any script that got onto the page, so a browser swaps its token for a cookie.
+
+- A session is 256 random bits, stored as a hash, with its token's scope. It lasts 90 days, or to the token's end date if that's
+  sooner, and ends when the token does. A token is shown only once, so a phone shouldn't need it often. A session can't make
+  another, or it could keep itself going for good. It's refused on `/mcp`.
+- No separate CSRF token. `SameSite=Strict` isn't enough, because a site ignores ports: another program's page on `localhost:3000`
+  counts as the same site as mia. So a cookie also needs `Sec-Fetch-Site: same-origin`, or `none` to read, and anything that writes
+  needs an `Origin` exactly matching its scheme and `Host`. A page can't set either header, so a token in the page would add nothing.
+  A request with neither header is refused, because every browser mia supports sends them. The Guard's looser `Origin` check still applies to tokens.
+- Two cookie names: `__Host-mia_session` over HTTPS and `mia_session` on plain HTTP, each read only on its own scheme. Safari drops
+  a `Secure` cookie on `http://127.0.0.1`, and Chrome and Firefox keep it, so one name that's always `Secure` would have failed
+  in Safari alone. Tested on 2026-11-06 with Chrome 156, Firefox 159, and Safari on a test Mac, over `127.0.0.1` and `localhost`:
+  each sent `Sec-Fetch-Site` and `Origin` as above on `fetch`, images, and `EventSource`.
+- Sign-in stays a token pasted into the page (decided 2026-11-06). A QR code can follow if a real phone shows it's needed.
 
 ## Look and feel
 
@@ -268,7 +295,7 @@ The same family as kia, ok3d, and avs:
 - `images/social-preview.html` and its rendered `social-preview.png`: 1280 by 640, on the navy
   radial background, in the same layout, with "mi" white and "a" amber, then a tagline and a line of
   explanation. It's uploaded in GitHub's settings by hand.
-- README's top: logo, tagline, badges, then the AI-assisted install prompt and the quick start.
+- README's top: logo, tagline, badges, then the AI-assisted install prompt and the quick start. The install prompt isn't written yet.
 - Sample images in the docs are made by mia with an open model, with the prompt and settings
   beside each. Screenshots use a demo gallery, never your real history.
 
@@ -292,6 +319,7 @@ Workflows, adapted from ok3d and kia:
   - MCP in that smoke test, over HTTP in both protocol eras and through `mia mcp`;
   - the launchd agent's file, checked with `plutil` on macOS, against a stand-in for `launchctl`. The real agent can't
     run in CI, so `scripts/real-engine.sh` installs and removes one by hand.
+  - the page in real browsers, with the fake engine: `browsers (Chrome and Firefox)` on Linux, and `browsers (Safari)` on macOS.
 - `codeql.yml`, `dependency-review.yml`, and `scorecard.yml`, as in ok3d.
 - `release.yml`: on a tag, checks that it's signed and matches the code's version, builds the package,
   attests it, and publishes a release with an SBOM and notes from `CHANGELOG.md`.
@@ -323,7 +351,7 @@ web page. `docs/roadmap.md` becomes the status page in 0.1.
 | 0.4 MCP and remote | MCP over HTTP and stdio, the launchd agent, LAN HTTPS with mia's certificate authority, power assertion | An assistant on another machine on the LAN makes and fetches an image, with the Mac idle |
 | 0.5 Web page | The prompt page, queue, gallery, and sign-in | Generate and browse from a phone |
 | 0.6 Hugging Face models | Inspect and add, LoRAs, license classes, Keychain token, disk checks; diffusers as a second engine | A third-party FLUX fine-tune, a LoRA, and an SDXL model all work; a pickle-only repository is refused |
-| 0.7 Image to image | Image to image, inpainting, upscaling, batches, where the engines support them | Each works through the web page, API, and MCP |
+| 0.7 Image to image | Image to image, inpainting, upscaling, batches, where the engines support them. The page can already send several jobs at once | Each works through the web page, API, and MCP |
 | 0.8 Packaging | `install.sh` or a Homebrew tap, `mia upgrade` to signed releases only, backup and restore | A clean Mac reaches a first image using only the README |
 | 1.0 | Full independent review of every file, no spot checks, plus an architectural review, with `docs/reviews/1.0-review.md` | Findings fixed or recorded |
 
@@ -350,7 +378,7 @@ Each answer goes back in this plan, and any that overturns a decision is called 
 Measured on 2026-11-04. **mia ships mflux 0.24.0, mlx 0.32.4, and Pillow 13.0.0.** Most of these tests
 ran on mflux 0.18.1 and an older mlx, and were then repeated where the answer could have changed: the
 results below say which. mia's first pin was six releases behind, because the Python test below forced a
-generic Mac platform and picked old versions, and nothing checked what was actually newest.
+generic Mac platform and picked old versions, and nothing checked what was newest.
 
 On the shipped versions, through mia's own engine (FLUX.2 klein 4B at 4-bit, 1024 by 1024, 4 steps):
 about 29 seconds, and a peak memory footprint of 7.6 GB, down from about 24 GB. mflux 0.24 decodes in
@@ -441,7 +469,7 @@ GB peak. Stopping a job took 3 to 6 seconds. The two images looked the same as b
   moved a large log aside. mia does this itself because `newsyslog` needs root to configure, which mia otherwise doesn't.
 
 Still open: other MCP clients, a real assistant running on another machine, FLUX.1 dev, the default cache against the capped one on the
-shipped versions, and two things the service hasn't been through: a real restart and login, and a Mac actually reaching
+shipped versions, and two things the service hasn't been through: a real restart and login, and a Mac reaching
 its idle sleep time during a job.
 
 ### HTTPS on a real LAN
@@ -455,7 +483,8 @@ Tested on 2026-11-05, from a second machine on the same network, running Linux, 
 - Claude Code 2.1.311, on the Mac but connecting through its LAN address, called a tool directly with `NODE_EXTRA_CA_CERTS`
   and through `mia mcp --ca`, and failed without the authority. It's what found the limit on addresses described under Security.
 - Not tested: a real assistant on the other machine (it didn't have one, so a scripted MCP client stood in), the macOS firewall
-  turned on, a phone, and browsers, which the web page will need.
+  turned on, and a phone. Chrome and Firefox have since run the page over HTTPS with the certificate check turned off, so no browser
+  has trusted the real authority yet.
 - 0.4 is accepted on this evidence (decided 2026-11-05). The exit test's wording asks for an assistant on the other machine. A
   scripted MCP client ran there, a real assistant ran on the Mac through its LAN address, and the pixels were the known ones, so
   each part has been shown. The exact combination should be tried when a machine with an assistant is to hand.
@@ -510,24 +539,6 @@ These were fixed before anything else in 0.4:
 Still to do:
 
 - Uploads in 0.7 need a higher size limit and more time to arrive, on their routes alone.
-
-### Browser sessions
-
-Decided on 2026-11-06, for the web page in 0.5. `<img>` and `EventSource` can't send an `Authorization` header, and a token kept
-in the browser could be read by any script that got onto the page, so a browser swaps its token for a cookie.
-
-- A session is 256 random bits, stored as a hash, with its token's scope. It lasts 90 days, or to the token's end date if that's
-  sooner, and ends when the token does. A token is shown only once, so a phone shouldn't need it often. A session can't make
-  another, or it could keep itself going for good. It's refused on `/mcp`.
-- No separate CSRF token. `SameSite=Strict` isn't enough, because a site ignores ports: another program's page on `localhost:3000`
-  counts as the same site as mia. So a cookie also needs `Sec-Fetch-Site: same-origin`, or `none` to read, and anything that writes
-  needs an `Origin` exactly matching its scheme and `Host`. A page can't set either header, so a token in the page would add nothing.
-  A request with neither header is refused, because every browser mia supports sends them. The Guard's looser `Origin` check still applies to tokens.
-- Two cookie names: `__Host-mia_session` over HTTPS and `mia_session` on plain HTTP, each read only on its own scheme. Safari drops
-  a `Secure` cookie on `http://127.0.0.1`, and Chrome and Firefox keep it, so one name that's always `Secure` would have failed
-  in Safari alone. Tested on 2026-11-06 with Chrome 156, Firefox 159, and Safari on a test Mac, over `127.0.0.1` and `localhost`:
-  each sent `Sec-Fetch-Site` and `Origin` as above on `fetch`, images, and `EventSource`.
-- Sign-in stays a token pasted into the page (decided 2026-11-06). A QR code can follow if a real phone shows it's needed.
 
 ## Risks
 

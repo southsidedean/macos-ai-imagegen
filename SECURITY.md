@@ -26,22 +26,22 @@ Working today, and tested:
 - mia's folder and history file are readable only by you.
 - The API listens only on this Mac unless you turn on remote access, and refuses a request whose `Host` or `Origin` names
   anywhere else, which stops a web page from reaching it through DNS rebinding.
-- The web page's files hold nothing of yours, and everything else but a bare health check and the API's public description
-  needs a token, and only in the `Authorization` header. It's checked before a request's body is read, and a test walks the app's routes to
-  prove each needs one. Each device has its own, with its own permissions, stored only as a hash and shown once.
-  You can revoke one without touching the others, and give one an end date.
-- `mia web` copies a token it has just made to the clipboard, where programs you run can read it, and Universal Clipboard can pass it
-  to your other Apple devices. Copy something else once you've signed in.
-- The web page runs under a strict content security policy: only its own files, and nothing inline. It adds prompts only as text,
-  so a prompt can't run as code, and a test checks both. It keeps no token.
-- A browser swaps its token for a session cookie that scripts on a page can't read, and keeps no token. The session is stored only
-  as a hash, has the token's permissions, lasts at most 90 days, and ends with its token. A cookie is refused unless the
-  browser marks the request as coming from mia's own page, with `Sec-Fetch-Site`, and `Origin` too for anything that writes. So
-  another site can't use it, and neither can another program's page on this Mac. It doesn't work on MCP.
+- Only a bare health check, the API's public description, and the web page's own files, which hold nothing of yours, can be read
+  without signing in. Anything else needs a token in the `Authorization` header, or the browser session below. That's checked before a
+  request's body is read, and a test walks the app's routes to prove each asks for it.
+- Each device has its own token, with its own permissions, stored only as a hash and shown once. You can revoke one without
+  touching the others, and give one an end date.
+- A browser swaps its token for a session cookie that scripts on a page can't read. The session is stored only as a hash, has the
+  token's permissions, lasts at most 90 days, and ends with its token. A cookie is refused unless the browser marks the request as
+  coming from mia's own page, with `Sec-Fetch-Site`, and `Origin` too for anything that writes. So another site can't use it, and
+  neither can another program's page on this Mac. It doesn't work on MCP.
+- The web page runs under a strict content security policy: only its own files, and nothing inline. It adds prompts only as text, so
+  a prompt can't run as code, and tests check both. In the browser, it keeps only the form's model, size, and count.
 - Requests and event streams are limited per device. The queue's length and a request's size have limits too, and refused
   requests are limited per address.
 - A connection gets 15 seconds to deliver a whole request, and is closed if an answer sits unread for 30 seconds with the
-  buffers behind it full, which a client still reading only reaches below about 10 KB a second. Connections are capped per address and overall, so holding many open with no token is limited.
+  buffers behind it full, which a client still reading only reaches below about 10 KB a second. Connections are capped per address
+  and overall, so holding many open with no token is limited.
 - A refusal from the REST API doesn't repeat your prompt, and prompts stay out of the server's output.
 - Deleting an image also deletes the job that made it. Finished jobs, which hold prompts, are forgotten after 30
   days.
@@ -62,6 +62,8 @@ Known limits:
   or household's devices.
 - Every process on your Mac shares one address, so one holding 64 connections or sending 30 bad tokens can make
   other programs on the Mac wait. It can't do that to other machines.
+- `mia web` copies a token it has just made to the clipboard, where programs you run can read it, and Universal Clipboard can pass it
+  to your other Apple devices. Copy something else once you've signed in.
 - Browsers send a cookie to every port on a name, so another web server on the same name gets mia's session cookie if your browser
   visits it. On this Mac, that's another program serving pages on `127.0.0.1` or `localhost`. Over HTTPS, it's another HTTPS
   server on the name you use for mia. Don't sign in to mia on a name it shares with something you don't trust.
@@ -79,7 +81,8 @@ Known limits:
   be pushed out quickly.
 - The authority can't be limited by address, because clients on BoringSSL, including Claude Code, then refuse its
   certificates. So a stolen key could pose as a bare address to your devices.
-- With remote access on, anyone on your network can read `/v1/health`, which gives mia's version, and `/openapi.json`.
+- With remote access on, anyone on your network can read `/v1/health`, which gives mia's version, `/openapi.json`, and the web page's
+  own files.
 - Someone on your network can make mia do handshakes, up to the limits above, and repeat them as fast as they finish, which
   could slow mia down. How much hasn't been measured. With every handshake slot full, new HTTPS connections are dropped until
   one comes free, at most 5 seconds later. They can't get further without a token.

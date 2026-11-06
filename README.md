@@ -11,9 +11,9 @@ AI images on your own Mac: mia runs open models such as FLUX natively on Apple S
 requests from a web page, a REST API, an MCP server, or the command line. An AI assistant or a
 script on another machine on your network can ask for a picture the same way you can at the Mac.
 
-**It's early:** mia makes images from a [web page](docs/web.md), the command line, a REST API, and an MCP server, on the
-Mac itself or from your other devices over HTTPS. The web page isn't in a release yet.
-[docs/roadmap.md](docs/roadmap.md) says where it stands.
+**It's early:** mia makes images from the command line, a REST API, and an MCP server, on the Mac itself or from your other
+devices over HTTPS. The [web page](docs/web.md) is built, and isn't in a release yet. [docs/roadmap.md](docs/roadmap.md) says
+where it stands.
 
 ## What it will do
 
@@ -44,13 +44,14 @@ took about 30 seconds on our test Mac. `uv run mia --help` lists the rest.
 
 ## Learn more
 
+- [docs/web.md](docs/web.md): the web page, not in a release yet
 - [docs/api.md](docs/api.md): the REST API, with examples
 - [docs/mcp.md](docs/mcp.md): connecting an AI assistant
 - [docs/service.md](docs/service.md): keeping mia running
 - [docs/remote.md](docs/remote.md): reaching mia from your other devices
 - [docs/roadmap.md](docs/roadmap.md): what's done, and what's next
 - [PLAN.md](PLAN.md): every decision, and the test results behind them
-- [SECURITY.md](SECURITY.md): how to report a problem
+- [SECURITY.md](SECURITY.md): how to report a problem, and how mia protects your pictures
 - [CHANGELOG.md](CHANGELOG.md): what changed
 
 ## License
