@@ -5,6 +5,7 @@
 const PAGE_SIZE = 24;
 const POLL_BUSY = 5000, POLL_IDLE = 30000; // milliseconds. A running job's progress comes from its event stream
 const THUMB_RETRY = 30000, THUMB_RETRIES = 2; // a page of pictures can reach the limit on requests, which lasts a minute
+const FORM_KEY = "mia.form";
 const SEEDS = 2 ** 32; // seeds run from 0 to one less than this
 const FAILED_SHOWN = 3, FAILED_FOR = 3600000; // a job that failed stays listed for an hour, in case nobody was looking
 
@@ -19,6 +20,8 @@ let pollTimer = null;
 let searchTimer = null;
 let opened = null; // the image in the dialog
 let lastSubmit = null; // so a retry after a lost answer can't make the picture twice
+let latest = null; // the picture that just finished, shown large
+let newWhileAway = 0; // finished while this tab was in the background
 
 class Problem extends Error {
   constructor(message, status) {
@@ -81,6 +84,7 @@ function signedOut(message = "") {
   // What was on the page was private, and the next person to sign in may not be the same.
   $("images").replaceChildren();
   $("queue").replaceChildren();
+  hideLatest();
   knownDone = null;
   shownImages = 0;
   show("sign-in-problem", message);
@@ -121,6 +125,9 @@ async function enter() {
   $("generate").hidden = !allows("generate");
   $("read-only").hidden = allows("generate");
   $("detail-reuse").hidden = !allows("generate");
+  $("detail-variation").hidden = !allows("generate");
+  $("latest-variation").hidden = !allows("generate");
+  showView(allows("generate") ? "make" : "gallery");
   $("detail-delete").hidden = !allows("admin");
   await Promise.all([loadModels(), loadImages(true)]);
   await poll();
@@ -138,10 +145,41 @@ async function loadModels() {
       textContent: model.installed ? model.title : `${model.title} (not downloaded)`,
       selected: model.id === chosen,
     })));
+    restoreForm();
     describeModel();
   } catch (problem) {
     show("notice", problem.message);
   }
+}
+
+// A convenience for this browser alone, so it never holds a prompt, and may not be there at all.
+function restoreForm() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(FORM_KEY));
+  } catch {
+    return;
+  }
+  if (!saved) return;
+  for (const id of ["model", "size", "count"]) {
+    if ([...$(id).options].some((option) => option.value === saved[id])) $(id).value = saved[id];
+  }
+  if (saved.width) $("width").value = saved.width;
+  if (saved.height) $("height").value = saved.height;
+  showCustomSize();
+}
+
+function saveForm() {
+  const saved = { model: $("model").value, size: $("size").value, count: $("count").value, width: $("width").value, height: $("height").value };
+  try {
+    localStorage.setItem(FORM_KEY, JSON.stringify(saved));
+  } catch {
+    // Private browsing, perhaps. The form just starts from its defaults next time.
+  }
+}
+
+function showCustomSize() {
+  $("custom-size").hidden = $("size").value !== "custom";
 }
 
 function describeModel() {
@@ -178,12 +216,28 @@ async function generate(event) {
       await api("POST", "/v1/jobs", { body: numbered, headers: { "Idempotency-Key": `${lastSubmit.key}-${added}` } });
     }
     lastSubmit = null;
+    saveForm();
   } catch (problem) {
     const start = added ? `${added} of ${count} pictures were added. ` : "";
     show("generate-problem", start + problem.message);
   } finally {
     $("generate-button").disabled = false;
   }
+  await poll();
+}
+
+// The same settings with a new seed, straight into the queue.
+async function variation(image, problem) {
+  const body = { prompt: image.prompt, model: image.model, width: image.width, height: image.height, steps: image.steps };
+  show(problem, "");
+  try {
+    await api("POST", "/v1/jobs", { body, headers: { "Idempotency-Key": crypto.randomUUID() } });
+  } catch (refused) {
+    show(problem, refused.message);
+    return;
+  }
+  $("detail").close();
+  showView("make");
   await poll();
 }
 
@@ -202,6 +256,7 @@ function reuse(image) {
   $("steps").value = image.steps;
   $("advanced").open = true;
   $("detail").close();
+  showView("make");
   $("compose").scrollIntoView();
   $("prompt").focus();
 }
@@ -261,6 +316,7 @@ function showJobs(jobs) {
   const failed = jobs.filter((job) => job.state === "failed" && Date.now() - Date.parse(job.finished) < FAILED_FOR).slice(0, FAILED_SHOWN);
   $("queue").replaceChildren(...[...active, ...failed].map(jobItem));
   $("queue-empty").hidden = active.length + failed.length > 0;
+  $("view-make").textContent = active.length ? `Make (${active.length})` : "Make";
   return active;
 }
 
@@ -296,8 +352,14 @@ async function noteNewImages(jobs) {
   const done = jobs.filter((job) => job.state === "done" && job.image);
   const fresh = knownDone === null ? [] : done.filter((job) => !knownDone.has(job.id));
   knownDone = new Set([...(knownDone || []), ...done.map((job) => job.id)]);
-  if (!fresh.length || $("search").value) return;
+  if (!fresh.length) return;
   const images = await Promise.all(fresh.reverse().map((job) => api("GET", job.links.image)));
+  showLatest(images.at(-1));
+  if (document.hidden) {
+    newWhileAway += images.length;
+    document.title = `(${newWhileAway}) mia`;
+  }
+  if ($("search").value) return; // it may not match, and the gallery is showing what was asked for
   for (const image of images) {
     $("images").prepend(thumbnail(image));
     shownImages += 1;
@@ -305,16 +367,38 @@ async function noteNewImages(jobs) {
   $("images-empty").hidden = true;
 }
 
+function showLatest(image) {
+  latest = image;
+  $("latest-image").src = image.links.file;
+  $("latest-image").alt = image.prompt;
+  $("latest-prompt").textContent = image.prompt;
+  show("latest-problem", "");
+  $("latest").hidden = false;
+}
+
+function hideLatest() {
+  latest = null;
+  $("latest").hidden = true;
+  $("latest-image").removeAttribute("src");
+}
+
+function showView(view) {
+  $("main-view").dataset.view = view;
+  $("view-make").setAttribute("aria-pressed", String(view === "make"));
+  $("view-gallery").setAttribute("aria-pressed", String(view === "gallery"));
+}
+
 async function poll() {
   clearTimeout(pollTimer);
-  if (!me || document.hidden) return;
+  if (!me) return;
   let wait = POLL_IDLE;
   try {
     const { jobs } = await api("GET", "/v1/jobs?limit=20");
     if (!me) return;
     const active = showJobs(jobs);
     const running = active.find((job) => job.state === "running");
-    if (running) watch(running);
+    // Polling carries on in the background, so the tab's title can say when a picture is done, and the browser slows it down.
+    if (running && !document.hidden) watch(running);
     else closeStream();
     if (active.length) wait = POLL_BUSY;
     await noteNewImages(jobs);
@@ -406,6 +490,7 @@ async function remove() {
   const item = document.querySelector(`[data-image="${opened.id}"]`);
   if (item) item.remove();
   shownImages -= 1;
+  if (latest && latest.id === opened.id) hideLatest();
   $("detail").close();
 }
 
@@ -417,10 +502,15 @@ function listen() {
   $("generate").addEventListener("submit", generate);
   $("model").addEventListener("change", describeModel);
   $("size").addEventListener("change", () => {
-    const custom = $("size").value === "custom";
-    $("custom-size").hidden = !custom;
-    if (custom) $("advanced").open = true;
+    showCustomSize();
+    if ($("size").value === "custom") $("advanced").open = true;
   });
+  $("view-make").addEventListener("click", () => showView("make"));
+  $("view-gallery").addEventListener("click", () => showView("gallery"));
+  $("latest-open").addEventListener("click", () => openImage(latest));
+  $("latest-variation").addEventListener("click", () => variation(latest, "latest-problem"));
+  $("latest-dismiss").addEventListener("click", hideLatest);
+  $("detail-variation").addEventListener("click", () => variation(opened, "detail-problem"));
   $("search").addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => loadImages(true), 250);
@@ -432,8 +522,13 @@ function listen() {
   $("detail").addEventListener("close", () => { $("detail-image").removeAttribute("src"); });
   // A phone stops a page in the background, and its stream with it.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stopWatching();
-    else if (me) poll();
+    if (document.hidden) {
+      closeStream();
+    } else {
+      newWhileAway = 0;
+      document.title = "mia";
+      if (me) poll();
+    }
   });
 }
 

@@ -40,6 +40,7 @@ def start_browser(name: str) -> WebDriver:
         chrome = webdriver.ChromeOptions()
         chrome.add_argument("--headless=new")
         chrome.add_argument("--no-proxy-server")
+        chrome.add_argument("--window-size=1280,900")  # it starts at 800 wide otherwise, which gets the narrow layout
         chrome.set_capability("acceptInsecureCerts", True)
         return webdriver.Chrome(options=chrome)
     if name == "firefox":
@@ -197,6 +198,103 @@ def test_a_custom_size_and_settings_reach_the_job(browser: WebDriver, service: S
     _status, data = service.request("GET", "/v1/images")
     image = json.loads(data)["images"][0]
     assert (image["width"], image["height"], image["seed"], image["steps"]) == (640, 384, 99, 3)
+
+
+def test_a_finished_picture_shows_large_with_a_new_variation(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    assert not page.shown("latest")  # nothing from before you arrived
+    page.type("prompt", "a large fox")
+    Select(page.find("size")).select_by_value("512x512")
+    page.run('document.getElementById("advanced").open = true')
+    page.type("seed", "5")
+    page.click_submit("generate")
+    page.wait(lambda: page.shown("latest"), seconds=30)
+    assert page.find("latest-prompt").text == "a large fox"
+    page.wait(lambda: browser.execute_script("return arguments[0].naturalWidth", page.find("latest-image")) > 0)
+    page.click("latest-variation")
+    page.wait(lambda: len(page.thumbnails()) == 2, seconds=30)
+    seeds = seeds_made(service)
+    assert 5 in seeds and len(set(seeds)) == 2  # the same settings, with a new seed
+    _status, data = service.request("GET", "/v1/images")
+    assert {(image["prompt"], image["width"]) for image in json.loads(data)["images"]} == {("a large fox", 512)}
+    page.click("latest-dismiss")
+    assert not page.shown("latest")
+
+
+def test_opening_the_large_picture_shows_its_settings_and_deleting_it_clears_it(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(token_for(service, "admin"))
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    page.type("prompt", "soon gone")
+    Select(page.find("size")).select_by_value("512x512")
+    page.click_submit("generate")
+    page.wait(lambda: page.shown("latest"), seconds=30)
+    page.click("latest-open")
+    page.wait(lambda: page.shown("detail"))
+    page.click("detail-delete")
+    page.click("detail-delete")
+    page.wait(lambda: not page.shown("latest"))
+
+
+def test_a_variation_from_the_picture_view_joins_the_queue(browser: WebDriver, service: Service) -> None:
+    made(service, "vary me", seed=3, steps=3)
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(page.thumbnails)
+    page.thumbnails()[0].click()
+    page.wait(lambda: page.shown("detail"))
+    page.click("detail-variation")
+    page.wait(lambda: not page.shown("detail"))
+    page.wait(lambda: len(page.thumbnails()) == 2, seconds=30)
+    _status, data = service.request("GET", "/v1/images")
+    images = json.loads(data)["images"]
+    assert {image["steps"] for image in images} == {3} and len({image["seed"] for image in images}) == 2
+
+
+def test_a_tab_in_the_background_says_when_a_picture_is_done(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    page.run('Object.defineProperty(document, "hidden", {value: true, configurable: true})')
+    service.finished(service.submit({"prompt": "while you were away", **PIXEL, "seed": 1}))
+    page.run('document.getElementById("search").value = ""; poll()')
+    page.wait(lambda: browser.title == "(1) mia")
+    page.run('Object.defineProperty(document, "hidden", {value: false, configurable: true}); document.dispatchEvent(new Event("visibilitychange"))')
+    page.wait(lambda: browser.title == "mia")
+
+
+def test_the_form_remembers_your_choices_but_never_the_prompt(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    assert Select(page.find("size")).first_selected_option.get_attribute("value") == "1024x1024"
+    page.type("prompt", "a secret prompt")
+    Select(page.find("size")).select_by_value("1344x768")
+    Select(page.find("count")).select_by_value("2")
+    page.click_submit("generate")
+    page.wait(lambda: len(page.jobs()) + len(page.thumbnails()) >= 1)
+    page.wait(lambda: page.run('return localStorage.getItem("mia.form")'))
+    stored = page.run("return JSON.stringify({...localStorage})")
+    assert "secret" not in stored and service.token not in stored
+    browser.refresh()
+    page.wait(lambda: page.shown("main-view"))
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    page.wait(lambda: Select(page.find("size")).first_selected_option.get_attribute("value") == "1344x768")
+    assert Select(page.find("count")).first_selected_option.get_attribute("value") == "2"
+    assert page.find("prompt").get_attribute("value") == ""
+
+
+@pytest.mark.parametrize("stored", ["not json", '{"size": "9x9", "model": "gone", "count": "999"}', "null"])
+def test_a_damaged_memory_of_the_form_is_ignored(browser: WebDriver, service: Service, stored: str) -> None:
+    page = page_for(browser, service)
+    browser.execute_script('localStorage.setItem("mia.form", arguments[0])', stored)
+    browser.refresh()
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    assert Select(page.find("size")).first_selected_option.get_attribute("value") == "1024x1024"
+    assert Select(page.find("count")).first_selected_option.get_attribute("value") == "1"
 
 
 def seeds_made(service: Service) -> list[int]:
@@ -471,6 +569,7 @@ def test_a_phone_width_doesnt_scroll_sideways(browser: WebDriver, service: Servi
         pytest.skip("this browser won't resize")
     try:
         page.wait(page.thumbnails)
+        page.click("view-gallery")
         width = page.run("return window.innerWidth")
         if width > 500:
             pytest.skip("this browser's window won't go that narrow")
@@ -483,6 +582,42 @@ def test_a_phone_width_doesnt_scroll_sideways(browser: WebDriver, service: Servi
         assert page.run('return document.getElementById("detail").getBoundingClientRect().width') <= width
     finally:
         browser.set_window_size(original["width"], original["height"])
+
+
+def test_a_narrow_window_switches_between_making_and_browsing(browser: WebDriver, service: Service) -> None:
+    # Clicks from a script, for the reason in the test above.
+    made(service, "a fox")
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    original = browser.get_window_size()
+    browser.set_window_size(390, 844)
+    try:
+        page.wait(page.thumbnails)
+        if page.run("return window.innerWidth") > 500:
+            pytest.skip("this browser's window won't go that narrow")
+        assert page.shown("view-make") and page.shown("generate") and not page.thumbnails()[0].is_displayed()
+        page.click("view-gallery")
+        page.wait(page.thumbnails()[0].is_displayed)
+        assert not page.shown("generate")
+        page.click("view-make")
+        page.wait(lambda: page.shown("generate"))
+        short = page.run("""return [...document.querySelectorAll("button, select, input, summary")]
+            .filter((e) => e.getClientRects().length && e.getBoundingClientRect().height < 44)
+            .map((e) => e.id || e.className || e.tagName)""")
+        assert short == []  # big enough for a finger
+        job = service.submit({"prompt": "a long job", "width": 512, "height": 512, "steps": 50, "seed": 1})
+        page.click("view-gallery")
+        browser.refresh()
+        page.wait(lambda: page.find("view-make").text == "Make (1)")
+        assert service.request("DELETE", f"/v1/jobs/{job}")[0] == 202
+    finally:
+        browser.set_window_size(original["width"], original["height"])
+
+
+def test_read_scope_starts_on_the_gallery_in_a_narrow_window(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(token_for(service, "read"))
+    assert page.find("main-view").get_attribute("data-view") == "gallery"
 
 
 def test_over_https_the_cookie_is_secure_and_everything_works(browser: WebDriver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

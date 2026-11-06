@@ -913,8 +913,16 @@ def test_the_page_loads_nothing_from_elsewhere_and_has_nothing_inline() -> None:
 def test_the_script_never_builds_html_from_a_string() -> None:
     # Prompts come from any device with a token. Text in the DOM can't run, and the policy is the second line of defence.
     script = (WEB / "mia.js").read_text()
-    for risky in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "srcdoc", "localStorage", "sessionStorage"):
+    for risky in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "srcdoc", "sessionStorage"):
         assert risky not in script, risky
+
+
+def test_the_only_thing_the_page_keeps_is_the_forms_choices() -> None:
+    # What's written is what the browser test reads back: never a token or a prompt.
+    script = (WEB / "mia.js").read_text()
+    assert re.findall(r"localStorage\.\w+\([^)]*", script) == ["localStorage.getItem(FORM_KEY", "localStorage.setItem(FORM_KEY, JSON.stringify(saved"]
+    saved = re.search(r"const saved = (\{.*?\});", script)
+    assert saved is not None and "prompt" not in saved[1] and "token" not in saved[1]
 
 
 def test_the_sign_in_form_doesnt_offer_to_keep_the_token() -> None:

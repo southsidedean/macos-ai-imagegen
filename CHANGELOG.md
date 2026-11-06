@@ -5,6 +5,8 @@
 mia has a web page. Open it on the Mac, or from your phone once HTTPS is on, to make pictures, watch the queue, and browse
 everything you've made, up to 8 at a time. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/web.md) has the steps.
 
+- A finished picture shows large, with **New variation**, which keeps its settings and picks a new seed. On a narrow screen, a switch
+  moves between making and browsing. The form has more sizes, and remembers your choices in that browser, but never the prompt.
 - A browser can sign in with a token and keep a session cookie instead of the token, through `POST /v1/session`. A session lasts up
   to 90 days, and ends with its token. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md#signing-in-from-a-browser) has the details.
 - An image's `links` include `preview` when it has one.

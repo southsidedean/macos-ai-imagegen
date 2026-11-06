@@ -211,6 +211,8 @@ Choices worth recording:
 - Asking with no token or cookie at all no longer counts as a refusal (decided 2026-11-06). It costs no database, and browsers do
   it by themselves: Safari asks for `/favicon.ico` and two `apple-touch-icon` files, and a signed-out page has to ask once, so a few
   reloads could otherwise have locked out an address.
+- A background tab keeps polling, because browsers slow it down by themselves, and its title then counts what's finished. Only the
+  event stream stops. Only the form's model, size, and count stay in `localStorage`, for that browser's convenience.
 - The number of pictures, up to 8, arrived in 0.5 (decided 2026-11-06), ahead of 0.7's batches, because it needs nothing new from
   the API: the page sends one job for each. So each can be stopped alone and keeps its own seed, and the existing limits apply. If
   the queue fills partway, the page says how many were added. Guidance and negative prompts aren't offered: klein accepts only

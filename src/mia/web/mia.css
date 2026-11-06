@@ -78,6 +78,18 @@ input, select, textarea {
   padding: 0.55rem 0.65rem;
 }
 textarea { resize: vertical; display: block; }
+/* Safari draws a native menu at its own size, whatever this says, so the page draws its own box and arrow. The picker that
+   opens is still the system's. The arrow is two gradients, as the page's policy allows no image but its own files. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 1.75rem;
+  text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: right 0.93rem center, right 0.6rem center;
+  background-size: 0.35rem 0.35rem;
+  background-repeat: no-repeat;
+}
 :focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
 
 button, .button {
@@ -113,15 +125,50 @@ button:disabled { opacity: 0.55; cursor: default; }
 .sign-in form { display: grid; gap: 0.75rem; }
 .sign-in label { margin: 0; }
 
-/* The page itself: one column on a phone, the pictures beside the controls on anything wider. */
+/* The page itself: pictures beside the controls when there's room. Otherwise one column, with a switch between making and
+   browsing, so looking through pictures doesn't mean scrolling past the form each time. */
 .studio {
   display: grid;
-  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
   padding: 1rem;
   max-width: 96rem;
   margin: 0 auto;
 }
-.side { display: grid; gap: 1.5rem; align-content: start; min-width: 0; }
+.side { display: contents; }
+.views {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.views button { background: transparent; color: var(--muted); }
+.views button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
+#compose { order: 1; }
+.latest { order: 2; }
+.side > section:not(#compose) { order: 3; }
+@media (max-width: 55.99rem) {
+  .studio[data-view="make"] .gallery { display: none; }
+  .studio[data-view="gallery"] .side > section,
+  .studio[data-view="gallery"] .latest { display: none; }
+  .gallery-top h2 { display: none; }  /* the switch above already says it */
+  .gallery-top input { max-width: none; }
+}
+
+/* Big enough for a finger: 44 points is what Apple and others ask for. */
+@media (pointer: coarse), (max-width: 55.99rem) {
+  button, .button, input, select, summary { min-height: 44px; }
+  .button { display: inline-flex; align-items: center; justify-content: center; }
+  summary { line-height: 44px; }  /* as a flex box, it would lose its triangle */
+  .job-line button { padding: 0.2rem 0.9rem; }
+}
+
 .side > section {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -139,8 +186,43 @@ details .pair + .pair { margin-top: 0.75rem; }
 .size-count { display: grid; grid-template-columns: minmax(0, 1fr) 5.5rem; gap: 0.75rem; }
 
 @media (min-width: 56rem) {
-  .studio { grid-template-columns: 22rem minmax(0, 1fr); align-items: start; }
-  .side { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+  .studio { grid-template-columns: 22rem minmax(0, 1fr); align-items: start; gap: 1.5rem; }
+  .views { display: none; }
+  .side {
+    display: grid;
+    gap: 1.5rem;
+    align-content: start;
+    min-width: 0;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+  .latest { grid-column: 2; grid-row: 1; }
+  .gallery { grid-column: 2; grid-row: 2; }
+}
+
+/* The picture that just finished */
+.latest {
+  display: grid;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  min-width: 0;
+  animation: arrive 0.45s ease-out;
+}
+@keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .latest { animation: none; } }
+.latest-picture { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: #0b0e1c; }
+.latest-picture img { display: block; width: 100%; max-height: min(70vh, 44rem); object-fit: contain; }
+.latest-text { display: grid; gap: 0.6rem; padding: 1rem; align-content: start; min-width: 0; }
+.latest-text h2 { margin: 0; color: var(--amber-ink); }
+.latest-prompt { overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+@media (min-width: 72rem) {
+  .latest { grid-template-columns: minmax(0, 2fr) minmax(15rem, 1fr); }
 }
 
 /* The queue. A job's tiles light up step by step, as in the logo: noise settling into an image. */
