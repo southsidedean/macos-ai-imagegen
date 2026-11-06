@@ -1,7 +1,7 @@
 # The REST API
 
-Scripts and other programs on your Mac can ask mia for images through its API, which is also what [the web page](web.md) uses. It listens only on this
-Mac until you turn on [HTTPS for your other devices](remote.md).
+Scripts and other programs on your Mac can ask mia for images through its API, which is also what [the web page](web.md) uses.
+It listens only on this Mac until you turn on [HTTPS for your other devices](remote.md).
 
 ## Start here
 
@@ -56,8 +56,8 @@ A job's `state` is `queued`, `running`, `done`, `failed`, or `cancelled`. A fail
 and isn't tried again. One job runs at a time, and the rest wait in order.
 
 To watch a job, poll `GET /v1/jobs/{id}`, or read `GET /v1/jobs/{id}/events`, which sends a server-sent event
-whenever the job changes, then ends. A stream also ends after an hour, or when its token is revoked or the server
-stops, without a `done` event, so check the job if that happens:
+whenever the job changes, then ends. A stream also ends after an hour, when its token is revoked or its browser session ends, or
+when the server stops, without a `done` event, so check the job if that happens:
 
 ```sh
 curl -sN http://127.0.0.1:8765/v1/jobs/JOB_ID/events -H "Authorization: Bearer $MIA_TOKEN"
@@ -84,7 +84,7 @@ Finished jobs are forgotten after 30 days. Their images stay until you delete th
 | `GET /v1/jobs/{id}/events` | read | One job's progress, as server-sent events |
 | `DELETE /v1/jobs/{id}` | generate | Stops a job |
 | `GET /v1/images` | read | History, newest first. Takes `search`, `limit`, and `offset` |
-| `GET /v1/images/{id}` | read | An image's prompt and settings |
+| `GET /v1/images/{id}` | read | An image's prompt and settings. Its `links` include `preview` only if it has one |
 | `GET /v1/images/{id}/file` | read | The PNG. One saved elsewhere with `mia generate --output` gets a 404 |
 | `GET /v1/images/{id}/preview` | read | A JPEG up to 512 pixels on its longest side. An image from before 0.4, or one saved elsewhere with `mia generate --output`, has none, and gets a 404 |
 | `DELETE /v1/images/{id}` | admin | Permanently deletes an image's record, the job that made it, and its file. A file saved elsewhere with `mia generate --output` stays where it is |
@@ -136,7 +136,7 @@ was sent to. Anything else gets a 403. If a request has an `Authorization` heade
 | Limit | Value | What you get |
 |---|---|---|
 | Requests per device, per minute | 240 | 429, with `Retry-After` |
-| Refused requests from one address, per minute, counting those with a wrong token or cookie | 30 | 429, with `Retry-After`, even with a good token, until the minute has passed |
+| Refused requests from one address, per minute | 30 | 429, with `Retry-After`, even with a good token, until the minute has passed |
 | Jobs submitted per device, per minute | 30 | 429, with `Retry-After` |
 | Jobs waiting in the queue | 20 | 429, with `Retry-After` |
 | Open event streams | 8 per device, 32 in all | 429, with `Retry-After` |
@@ -145,6 +145,8 @@ was sent to. Anything else gets a 403. If a request has an `Authorization` heade
 | An answer left unread, with the buffers behind it full | 30 seconds | The connection is closed. A client still reading only gets this below about 10 KB a second |
 | Open connections | 64 from one address, 256 in all | A new connection is closed |
 | Free disk needed to accept a job | 2 GB | 507 |
+
+A wrong token or cookie counts as a refused request. A request with neither doesn't, and still gets a 401.
 
 A model that isn't downloaded yet gets a 409, with the command that downloads it. A request that can't be
 understood gets a 422 saying which field and why, without repeating your prompt. Anything but `GET /v1/health`,
@@ -156,8 +158,7 @@ mia restarts the worker and marks the job failed, and the next job runs. Time th
 ## Good to know
 
 To keep the server running without a window open, see [Keeping mia running](service.md). While it's running, its worker
-holds the GPU, so `mia generate` refuses to run. Send the job through
-the API instead, or stop the server first.
+holds the GPU, so `mia generate` refuses to run. Send the job through the API instead, or stop the server first.
 
 Stopping the server fails the job it's running and keeps the ones waiting, which run when it starts again.
 

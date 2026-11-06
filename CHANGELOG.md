@@ -2,14 +2,17 @@
 
 ## 0.5.0 (unreleased)
 
-mia has a web page. Open it on the Mac, or from your phone once HTTPS is on, to make pictures, watch the queue, and browse
-everything you've made, up to 8 at a time. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/web.md) has the steps.
+mia has a web page. Open it on the Mac, or from your other devices once HTTPS is on, to make pictures, watch the queue, and browse
+everything you've made. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/web.md) has the steps.
 
-- A finished picture shows large, with **New variation**, which keeps its settings and picks a new seed. On a narrow screen, a switch
-  moves between making and browsing. The form has more sizes, and remembers your choices in that browser, but never the prompt.
-- `mia web` opens the page, and makes a token to sign in with the first time. In a picture's view, Previous and Next or the arrow keys
-  move between pictures, and there's Copy prompt and Download. Command-Return generates, and a line under the queue shows the worker and
-  free disk.
+- `mia web` opens the page, and makes a token to sign in with the first time.
+- The form takes a prompt, a model, a size, and up to 8 pictures at once, with the seed and steps folded away. It remembers your
+  choices in that browser, but never the prompt. Command-Return generates.
+- The queue shows live progress, stops jobs, and has a line under it for the worker and free disk.
+- A finished picture shows large, with **New variation**, which keeps its settings and picks a new seed.
+- The gallery has search. A picture's view shows its settings and can reuse them, with Previous and Next or the arrow keys,
+  Copy prompt, and Download.
+- On a narrow screen, a switch moves between making and browsing, and the controls are large enough for a finger.
 - A browser can sign in with a token and keep a session cookie instead of the token, through `POST /v1/session`. A session lasts up
   to 90 days, and ends with its token. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md#signing-in-from-a-browser) has the details.
 - An image's `links` include `preview` when it has one.

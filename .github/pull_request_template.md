@@ -2,6 +2,7 @@
 
 - [ ] `scripts/check.sh` passes
 - [ ] Tests come with the change (a bug fix starts with a test that fails without it)
+- [ ] A change to the page: `MIA_BROWSERS=chrome,firefox uv run pytest tests/test_browser.py` passed (CI adds Safari)
 - [ ] An engine change: `scripts/real-engine.sh` passed on a Mac (CI never runs a real model)
 - [ ] Docs and `PLAN.md` updated in this pull request, if it changes a decision
 - [ ] Text people read was reviewed for AI writing patterns (the `humanizer` skill)

@@ -2,6 +2,9 @@
 
 Make pictures, watch the queue, and browse everything you've made, from a browser on your Mac or your phone.
 
+The page isn't in a release yet, and the README's steps install the last release. To try the page now, leave out `--branch v0.4.0`
+when you clone.
+
 ## Start here
 
 You need mia installed and a model downloaded: the [README](../README.md) has both steps. Start the server, which keeps running
@@ -23,7 +26,8 @@ in. Type a prompt, and press Generate. Keep the token somewhere safe if you'll w
 
 ## On your phone
 
-mia takes connections from other devices only over HTTPS, and your phone has to be told to trust it. You do this once.
+mia takes connections from other devices only over HTTPS, and your phone has to be told to trust it. You do this once. These steps
+haven't been tried on a real phone yet, so the names of the settings may differ.
 
 You need [the service](service.md) installed. On the Mac, turn on HTTPS, make a token, and save mia's authority to a file:
 
@@ -62,12 +66,12 @@ complains, import the file under **Settings**, **Privacy & Security**, **View Ce
   because it also turns the result into a picture. **Stop** ends a running job at its next step, and **Remove** takes out a
   waiting one. A job that failed stays listed for an hour, with the reason.
 - **Gallery.** Pictures from every device appear here, newest first. Search looks through the prompts.
-- **One picture.** Press a picture to see its settings. **New variation** is here too. **Use these settings** copies them to the form,
-  including the seed, so Generate makes the same picture again. **Previous** and **Next**, or the arrow keys, move between pictures.
-  **Copy prompt** and **Download** do what they say.
+- **One picture.** Press a picture to see its settings, with **New variation**, **Copy prompt**, and **Download**. **Use these settings**
+  copies them to the form, including the seed, so Generate makes the same picture again. **Previous** and **Next**, or the arrow keys,
+  move between pictures.
 - **The keyboard.** In the prompt box, Command-Return or Control-Enter is the same as pressing Generate.
-- **The line under the queue** says whether the worker is running, and how much disk is free.
-- **On a narrow screen,** **Make** and **Gallery** switch between the form and the pictures.
+- **Status.** The line under the queue says whether the worker is running, and how much disk is free.
+- **Narrow screens.** **Make** and **Gallery** switch between the form and the pictures.
 - **Your choices.** This browser remembers the model, size, and number of pictures you last used, but never the prompt.
 
 ## What your token allows
@@ -84,14 +88,13 @@ Deleting a picture takes two presses, and can't be undone. Add `--scope admin` w
 
 - **Staying signed in.** A browser stays signed in for 90 days, or until the token's end date if that's sooner. **Sign out** ends it
   on that browser. `uv run mia token revoke my-phone` ends it on every browser that used the token.
-- **Tokens stay out of the browser.** The page swaps yours for a sign-in that scripts can't read, and forgets the token. What it
-  keeps in the browser is only the form's choices above. You'll
-  need a token again after 90 days, so keep it in a password manager, or make a new one.
+- **Tokens stay out of the browser.** The page swaps yours for a sign-in that scripts can't read, and forgets the token. You'll need
+  a token again after 90 days, so keep it in a password manager, or make a new one.
 - **Everyone shares one history.** Anyone with a token sees every prompt and picture, so give tokens only to people you'd share
   them with.
 - **A model that isn't downloaded** says so in the menu, and the page tells you the command if you choose it.
-- **Browsers it needs.** Current Safari, Chrome, and Firefox. Older browsers that don't send `Sec-Fetch-Site`, such as Safari before
-  16.4, can't sign in properly.
+- **Browsers it needs.** Current Safari, Chrome, and Firefox. A browser that doesn't send `Sec-Fetch-Site`, such as Safari before 16.4,
+  can't use the page.
 
 ## If it doesn't work
 
@@ -106,6 +109,6 @@ Deleting a picture takes two presses, and can't be undone. Add `--scope admin` w
 
 ## Under the hood
 
-The page is three small files with no build step, in `src/mia/web`. They use the same [REST API](api.md) as any other program,
+The page is three small files and the logo, with no build step, in `src/mia/web`. They use the same [REST API](api.md) as any other program,
 with the [session cookie](api.md#signing-in-from-a-browser) in place of a token. A strict content security policy stops the page
 running anything but its own script or loading anything from elsewhere.
