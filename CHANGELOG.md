@@ -6,12 +6,13 @@ mia has a web page. Open it on the Mac, or from your other devices once HTTPS is
 everything you've made. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/web.md) has the steps.
 
 - `mia web` opens the page, and makes a token to sign in with the first time.
-- The form takes a prompt, a model, a size, and up to 8 pictures at once, with the seed and steps folded away. It remembers your
-  choices in that browser, but never the prompt. Command-Return generates.
-- The queue shows live progress, stops jobs, and has a line under it for the worker and free disk.
+- The form takes a prompt, a model, a size, and up to 8 pictures at once, with the seed and steps folded away, a line of help on the
+  settings, and style ideas to add to the prompt. It remembers your choices in that browser, but never the prompt. Command-Return generates.
+- The queue shows live progress, stops jobs, and has a line under it for the worker and free disk. A sound can play when a picture
+  finishes, if you turn it on.
 - A finished picture shows large, with **New variation**, which keeps its settings and picks a new seed.
 - The gallery has search. A picture's view shows its settings and can reuse them, with Previous and Next or the arrow keys,
-  Copy prompt, and Download.
+  Copy prompt, Copy settings, and Download.
 - On a narrow screen, a switch moves between making and browsing, and the controls are large enough for a finger.
 - A browser can sign in with a token and keep a session cookie instead of the token, through `POST /v1/session`. A session lasts up
   to 90 days, and ends with its token. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md#signing-in-from-a-browser) has the details.

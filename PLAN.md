@@ -219,7 +219,12 @@ Choices worth recording:
   sign in for you: other programs on the Mac can run commands and open pages as well, and a token doesn't go in a URL. Its scope is
   `admin`, as whoever runs it can already delete these files. A lost one is replaced with `--new`.
 - A background tab keeps polling, because browsers slow it down by themselves, and its title then counts what's finished. Only the
-  event stream stops. Only the form's model, size, and count stay in `localStorage`, for that browser's convenience.
+  event stream stops. Only the form's model, size, and count, and the sound switch, stay in `localStorage`, for that browser's convenience.
+- Looking at DiffusionBee's public repository for ideas (2026-11-06; its last release was August 2024) gave four things for 0.5: a line
+  of help on the settings, style ideas for the prompt, Copy settings, and a sound when a picture finishes. The style list is our own, with
+  no artists' names. The sound is made by the browser, so the page has no file to load and its policy doesn't change. No code was copied.
+- For 0.6, each model should declare what it supports, so the form only shows settings that do something. That's where guidance and
+  negative prompts belong, and "send to image to image" from any picture belongs in 0.7.
 - The number of pictures, up to 8, arrived in 0.5 (decided 2026-11-06), ahead of 0.7's batches, because it needs nothing new from
   the API: the page sends one job for each. So each can be stopped alone and keeps its own seed, and the existing limits apply. If
   the queue fills partway, the page says how many were added. Guidance and negative prompts aren't offered: klein accepts only

@@ -49,6 +49,11 @@
         <form id="generate">
           <label for="prompt">Prompt</label>
           <textarea id="prompt" rows="4" maxlength="4000" required aria-keyshortcuts="Meta+Enter Control+Enter" placeholder="a red fox in a snowy forest at sunrise, photograph"></textarea>
+          <details id="styles">
+            <summary>Style ideas</summary>
+            <p class="hint">Press one to add it to your prompt, and again to take it out.</p>
+            <div id="style-list"></div>
+          </details>
           <div>
             <label for="model">Model</label>
             <select id="model"></select>
@@ -81,16 +86,19 @@
               </select>
             </div>
           </div>
+          <p class="hint">Larger pictures take longer and use more memory. Each picture waits its turn in the queue.</p>
           <details id="advanced">
             <summary>Advanced</summary>
             <div class="pair">
               <div>
                 <label for="seed">Seed</label>
                 <input id="seed" type="number" inputmode="numeric" min="0" max="4294967295" placeholder="New each time">
+                <p class="hint">The same seed and settings make the same picture.</p>
               </div>
               <div>
                 <label for="steps">Steps</label>
                 <input id="steps" type="number" inputmode="numeric" min="1" max="50">
+                <p id="steps-hint" class="hint"></p>
               </div>
             </div>
             <div id="custom-size" class="pair" hidden>
@@ -114,6 +122,7 @@
         <ul id="queue" class="queue"></ul>
         <p id="queue-empty" class="hint">Nothing's waiting.</p>
         <p id="status" class="hint status" role="status"></p>
+        <label class="option"><input id="sound" type="checkbox"> Play a sound when a picture finishes</label>
       </section>
     </div>
 
@@ -159,6 +168,7 @@
           <button id="detail-variation" type="button" class="primary">New variation</button>
           <button id="detail-reuse" type="button" class="quiet">Use these settings</button>
           <button id="detail-copy" type="button" class="quiet">Copy prompt</button>
+          <button id="detail-copy-settings" type="button" class="quiet">Copy settings</button>
           <a id="detail-download" class="button quiet">Download</a>
           <a id="detail-file" class="button quiet" target="_blank" rel="noopener">Open full size</a>
           <button id="detail-delete" type="button" class="quiet danger">Delete</button>

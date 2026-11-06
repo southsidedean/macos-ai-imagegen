@@ -36,7 +36,7 @@ Working today, and tested:
   coming from mia's own page, with `Sec-Fetch-Site`, and `Origin` too for anything that writes. So another site can't use it, and
   neither can another program's page on this Mac. It doesn't work on MCP.
 - The web page runs under a strict content security policy: only its own files, and nothing inline. It adds prompts only as text, so
-  a prompt can't run as code, and tests check both. In the browser, it keeps only the form's model, size, and count.
+  a prompt can't run as code, and tests check both. In the browser, it keeps only the form's model, size, and count, and the sound switch.
 - Requests and event streams are limited per device. The queue's length and a request's size have limits too, and refused
   requests are limited per address.
 - A connection gets 15 seconds to deliver a whole request, and is closed if an answer sits unread for 30 seconds with the

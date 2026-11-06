@@ -6,6 +6,13 @@ const PAGE_SIZE = 24;
 const POLL_BUSY = 5000, POLL_IDLE = 30000; // milliseconds. A running job's progress comes from its event stream
 const THUMB_RETRY = 30000, THUMB_RETRIES = 2; // a page of pictures can reach the limit on requests, which lasts a minute
 const FORM_KEY = "mia.form";
+// Our own short list of plain words that work in a prompt. No artists' names: a person's style isn't ours to offer.
+const STYLES = [
+  ["Medium", ["photograph", "oil painting", "watercolor", "pencil sketch", "ink drawing", "pixel art", "3D render"]],
+  ["Light", ["golden hour", "soft window light", "dramatic lighting", "neon glow", "overcast"]],
+  ["Camera", ["close-up", "wide angle", "aerial view", "shallow depth of field", "film grain"]],
+  ["Mood", ["calm", "moody", "dreamlike", "playful", "cinematic"]],
+];
 const MIN_FREE = 2 * 1024 ** 3; // below this, the server refuses new jobs
 const COPIED_FOR = 2000;
 const SEEDS = 2 ** 32; // seeds run from 0 to one less than this
@@ -24,6 +31,7 @@ let opened = null; // the image in the dialog
 let lastSubmit = null; // so a retry after a lost answer can't make the picture twice
 let latest = null; // the picture that just finished, shown large
 let newWhileAway = 0; // finished while this tab was in the background
+let audio = null;
 
 class Problem extends Error {
   constructor(message, status) {
@@ -168,11 +176,12 @@ function restoreForm() {
   }
   if (saved.width) $("width").value = saved.width;
   if (saved.height) $("height").value = saved.height;
+  $("sound").checked = saved.sound === true;
   showCustomSize();
 }
 
 function saveForm() {
-  const saved = { model: $("model").value, size: $("size").value, count: $("count").value, width: $("width").value, height: $("height").value };
+  const saved = { model: $("model").value, size: $("size").value, count: $("count").value, width: $("width").value, height: $("height").value, sound: $("sound").checked };
   try {
     localStorage.setItem(FORM_KEY, JSON.stringify(saved));
   } catch {
@@ -189,6 +198,7 @@ function describeModel() {
   if (!model) return;
   $("license").textContent = `License: ${model.license}.`;
   $("steps").placeholder = String(model.steps);
+  $("steps-hint").textContent = `More steps take longer. This model suggests ${model.steps}.`;
 }
 
 function chosenSize() {
@@ -228,6 +238,37 @@ async function generate(event) {
   await poll();
 }
 
+function promptParts() {
+  return $("prompt").value.split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function showStylesInPrompt() {
+  const parts = promptParts();
+  for (const button of document.querySelectorAll("#style-list button")) {
+    button.setAttribute("aria-pressed", String(parts.includes(button.textContent)));
+  }
+}
+
+function toggleStyle(style) {
+  const parts = promptParts();
+  $("prompt").value = (parts.includes(style) ? parts.filter((part) => part !== style) : [...parts, style]).join(", ");
+  showStylesInPrompt();
+}
+
+function buildStyles() {
+  $("style-list").replaceChildren(...STYLES.map(([group, styles]) => element(
+    "div",
+    { className: "style-group" },
+    element("h3", { textContent: group }),
+    element("div", { className: "chips" }, ...styles.map((style) => {
+      const button = element("button", { type: "button", className: "quiet", textContent: style });
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", () => toggleStyle(style));
+      return button;
+    })),
+  )));
+}
+
 // The same settings with a new seed, straight into the queue.
 async function variation(image, problem) {
   const body = { prompt: image.prompt, model: image.model, width: image.width, height: image.height, steps: image.steps };
@@ -245,6 +286,7 @@ async function variation(image, problem) {
 
 function reuse(image) {
   $("prompt").value = image.prompt;
+  showStylesInPrompt();
   if ([...$("model").options].some((option) => option.value === image.model)) $("model").value = image.model;
   describeModel();
   const size = `${image.width}x${image.height}`;
@@ -364,6 +406,7 @@ async function noteNewImages(jobs) {
   if (!fresh.length) return;
   const images = await Promise.all(fresh.reverse().map((job) => api("GET", job.links.image)));
   showLatest(images.at(-1));
+  if ($("sound").checked) chime();
   if (document.hidden) {
     newWhileAway += images.length;
     document.title = `(${newWhileAway}) mia`;
@@ -374,6 +417,33 @@ async function noteNewImages(jobs) {
     listed.unshift(image);
   }
   $("images-empty").hidden = true;
+}
+
+// A browser won't play sound until you've used the page, so this is also called when you do.
+function wakeAudio() {
+  try {
+    audio ??= new AudioContext();
+    audio.resume();
+  } catch {
+    // No sound here. The picture still shows.
+  }
+}
+
+// Made here, so the page has no sound file to load, and its policy needn't allow one.
+function chime() {
+  wakeAudio();
+  if (!audio) return;
+  for (const [pitch, start] of [[660, 0], [880, 0.14]]) {
+    const note = audio.createOscillator();
+    const volume = audio.createGain();
+    const at = audio.currentTime + start;
+    note.frequency.value = pitch;
+    volume.gain.setValueAtTime(0.12, at);
+    volume.gain.exponentialRampToValueAtTime(0.001, at + 0.3);
+    note.connect(volume).connect(audio.destination);
+    note.start(at);
+    note.stop(at + 0.3);
+  }
 }
 
 function showLatest(image) {
@@ -481,6 +551,7 @@ function openImage(image) {
   $("detail-download").href = image.links.file;
   $("detail-download").download = `mia-${image.id}.png`;
   $("detail-copy").textContent = "Copy prompt";
+  $("detail-copy-settings").textContent = "Copy settings";
   // The picture just finished may not be in the list, if a search is hiding it.
   const at = listed.findIndex((known) => known.id === image.id);
   $("detail-previous").disabled = at <= 0;
@@ -499,15 +570,21 @@ async function move(by) {
   if (next) openImage(next);
 }
 
-async function copyPrompt() {
+async function copy(text, button) {
+  const label = button.textContent;
   try {
-    await navigator.clipboard.writeText(opened.prompt);
+    await navigator.clipboard.writeText(text);
   } catch {
-    show("detail-problem", "This browser wouldn't copy it. You can select the prompt above instead.");
+    show("detail-problem", "This browser wouldn't copy it. You can select the text above instead.");
     return;
   }
-  $("detail-copy").textContent = "Copied";
-  setTimeout(() => { $("detail-copy").textContent = "Copy prompt"; }, COPIED_FOR);
+  button.textContent = "Copied";
+  setTimeout(() => { button.textContent = label; }, COPIED_FOR);
+}
+
+// As a job for the API, so the same text works in a script.
+function settingsText({ prompt, model, width, height, steps, seed }) {
+  return JSON.stringify({ prompt, model, width, height, steps, seed }, null, 2);
 }
 
 async function remove() {
@@ -555,7 +632,16 @@ function listen() {
   $("detail-close").addEventListener("click", () => $("detail").close());
   $("detail-previous").addEventListener("click", () => move(-1));
   $("detail-next").addEventListener("click", () => move(1));
-  $("detail-copy").addEventListener("click", copyPrompt);
+  $("detail-copy").addEventListener("click", () => copy(opened.prompt, $("detail-copy")));
+  $("detail-copy-settings").addEventListener("click", () => copy(settingsText(opened), $("detail-copy-settings")));
+  $("sound").addEventListener("change", () => {
+    saveForm();
+    if ($("sound").checked) wakeAudio();
+  });
+  for (const kind of ["pointerdown", "keydown"]) {
+    document.addEventListener(kind, () => { if ($("sound").checked && !audio) wakeAudio(); });
+  }
+  $("prompt").addEventListener("input", showStylesInPrompt);
   $("detail").addEventListener("keydown", (event) => {
     if (event.key === "ArrowLeft") move(-1);
     if (event.key === "ArrowRight") move(1);
@@ -583,6 +669,7 @@ function listen() {
 
 async function start() {
   listen();
+  buildStyles();
   try {
     me = await api("GET", "/v1/session");
   } catch (problem) {
