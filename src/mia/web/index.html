@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>mia</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/mia.css">
+  <script src="/mia.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <picture class="brand">
+      <source media="(prefers-color-scheme: dark)" srcset="/logo-dark.svg">
+      <img src="/logo.svg" alt="" width="36" height="36">
+    </picture>
+    <h1>mi<span>a</span></h1>
+    <div id="account" class="account" hidden>
+      <span id="device"></span>
+      <button id="sign-out" type="button" class="quiet">Sign out</button>
+    </div>
+  </header>
+
+  <p id="notice" class="notice" role="status" hidden></p>
+
+  <main id="sign-in-view" class="sign-in" hidden>
+    <h2>Sign in</h2>
+    <p>Paste a token from your Mac. This browser swaps it for a sign-in that lasts up to 90 days, and doesn't keep the token.</p>
+    <form id="sign-in-form">
+      <label for="token">Token</label>
+      <input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <p id="sign-in-problem" class="problem" role="alert" hidden></p>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+    <p class="hint">To make one, run this on the Mac: <code>uv run mia token create --for my-phone</code></p>
+  </main>
+
+  <main id="main-view" class="studio" hidden>
+    <div class="side">
+      <section id="compose" aria-labelledby="compose-title">
+        <h2 id="compose-title">New picture</h2>
+        <p id="read-only" class="hint" hidden>This token can only look. Making pictures needs a token with the generate scope.</p>
+        <form id="generate">
+          <label for="prompt">Prompt</label>
+          <textarea id="prompt" rows="4" maxlength="4000" required placeholder="a red fox in a snowy forest at sunrise, photograph"></textarea>
+          <div>
+            <label for="model">Model</label>
+            <select id="model"></select>
+            <p id="license" class="hint"></p>
+          </div>
+          <div>
+            <label for="size">Size</label>
+            <select id="size">
+              <option value="1024x1024">Square, 1024 × 1024</option>
+              <option value="832x1216">Portrait, 832 × 1216</option>
+              <option value="1216x832">Landscape, 1216 × 832</option>
+              <option value="512x512">Small, 512 × 512</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <details id="advanced">
+            <summary>Advanced</summary>
+            <div class="pair">
+              <div>
+                <label for="seed">Seed</label>
+                <input id="seed" type="number" inputmode="numeric" min="0" max="4294967295" placeholder="New each time">
+              </div>
+              <div>
+                <label for="steps">Steps</label>
+                <input id="steps" type="number" inputmode="numeric" min="1" max="50">
+              </div>
+            </div>
+            <div id="custom-size" class="pair" hidden>
+              <div>
+                <label for="width">Width</label>
+                <input id="width" type="number" inputmode="numeric" min="256" max="2048" step="16" value="1024">
+              </div>
+              <div>
+                <label for="height">Height</label>
+                <input id="height" type="number" inputmode="numeric" min="256" max="2048" step="16" value="1024">
+              </div>
+            </div>
+          </details>
+          <p id="generate-problem" class="problem" role="alert" hidden></p>
+          <button id="generate-button" type="submit" class="primary">Generate</button>
+        </form>
+      </section>
+
+      <section aria-labelledby="queue-title">
+        <h2 id="queue-title">Queue</h2>
+        <ul id="queue" class="queue"></ul>
+        <p id="queue-empty" class="hint">Nothing's waiting.</p>
+      </section>
+    </div>
+
+    <section class="gallery" aria-labelledby="gallery-title">
+      <div class="gallery-top">
+        <h2 id="gallery-title">Gallery</h2>
+        <input id="search" type="search" placeholder="Search prompts" aria-label="Search prompts">
+      </div>
+      <ul id="images" class="images"></ul>
+      <p id="images-empty" class="hint" hidden></p>
+      <button id="more" type="button" class="quiet wide" hidden>Show more</button>
+    </section>
+  </main>
+
+  <dialog id="detail" aria-labelledby="detail-prompt">
+    <div class="detail">
+      <img id="detail-image" alt="">
+      <div class="detail-text">
+        <p id="detail-prompt" class="detail-prompt"></p>
+        <dl id="detail-settings"></dl>
+        <p id="detail-problem" class="problem" role="alert" hidden></p>
+        <div class="actions">
+          <button id="detail-reuse" type="button" class="primary">Use these settings</button>
+          <a id="detail-file" class="button quiet" target="_blank" rel="noopener">Open full size</a>
+          <button id="detail-delete" type="button" class="quiet danger">Delete</button>
+          <button id="detail-close" type="button" class="quiet">Close</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>

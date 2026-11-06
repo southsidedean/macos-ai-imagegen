@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -868,3 +870,77 @@ def test_the_events_route_gives_the_stream_its_session(api: TestClient, monkeypa
     job = api.post("/v1/jobs", json=BODY, headers=OWN_WRITE).json()
     assert api.get(job["links"]["events"], headers=OWN_READ).status_code == 200
     assert given == [value]
+
+
+# The page. tests/test_browser.py runs it for real. These are the rules that hold whatever it does.
+WEB = Path(server.__file__).parent / "web"
+
+
+@pytest.mark.parametrize("path", list(server.PAGE))
+def test_the_page_needs_no_token_and_carries_its_policy(api: TestClient, path: str) -> None:
+    answer = api.get(path)
+    assert answer.status_code == 200
+    assert answer.headers["content-type"].split(";")[0] == server.PAGE[path][1].split(";")[0]
+    assert answer.headers["x-content-type-options"] == "nosniff"
+    assert answer.headers["referrer-policy"] == "same-origin"
+    policy = answer.headers["content-security-policy"]
+    assert "default-src 'none'" in policy and "frame-ancestors 'none'" in policy and "'unsafe" not in policy
+
+
+def test_nothing_else_in_the_pages_folder_or_beyond_it_is_served(api: TestClient) -> None:
+    for path in ("/index.html", "/web/mia.js", "/../server.py", "/%2e%2e/server.py", "/mia.js/", "/server.py"):
+        assert api.get(path).status_code == 401
+
+
+def test_only_get_serves_the_page(api: TestClient) -> None:
+    assert api.post("/", json={}).status_code == 401
+
+
+def test_every_file_in_the_pages_folder_is_on_the_list() -> None:
+    assert {file.name for file in WEB.iterdir()} == {name for name, _kind in server.PAGE.values()}
+
+
+def test_the_page_loads_nothing_from_elsewhere_and_has_nothing_inline() -> None:
+    page = (WEB / "index.html").read_text()
+    assert "<style" not in page and " style=" not in page and "javascript:" not in page
+    assert not re.search(r"<script(?![^>]*\bsrc=)", page)
+    assert not re.search(r"\son[a-z]+=", page)
+    for file in WEB.iterdir():
+        if file.suffix != ".svg":  # a logo names its XML namespace, which is never fetched
+            assert not re.search(r"(?:src|href)=[\"']?(?:https?:)?//|url\(|@import|https?://", file.read_text()), file.name
+
+
+def test_the_script_never_builds_html_from_a_string() -> None:
+    # Prompts come from any device with a token. Text in the DOM can't run, and the policy is the second line of defence.
+    script = (WEB / "mia.js").read_text()
+    for risky in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "srcdoc", "localStorage", "sessionStorage"):
+        assert risky not in script, risky
+
+
+def test_the_sign_in_form_doesnt_offer_to_keep_the_token() -> None:
+    assert re.search(r'<input id="token" type="password" autocomplete="off"', (WEB / "index.html").read_text())
+
+
+@pytest.mark.parametrize(("ours", "original"), [("logo.svg", "mia-logo.svg"), ("logo-dark.svg", "mia-logo-dark.svg")])
+def test_the_pages_logos_are_the_projects(ours: str, original: str) -> None:
+    root = Path(__file__).resolve().parent.parent
+    assert (WEB / ours).read_bytes() == (root / "images" / original).read_bytes()
+
+
+def test_the_package_includes_the_page() -> None:
+    settings = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text())
+    assert "web/*" in settings["tool"]["setuptools"]["package-data"]["mia"]
+
+
+def test_asking_with_nothing_doesnt_count_as_a_refusal(api: TestClient) -> None:
+    # A signed-out page has to ask once, and Safari asks for three icons by itself. Reloading mustn't lock anyone out.
+    for _ in range(server.REFUSED_SIGN_INS_PER_MINUTE + 5):
+        assert api.get("/favicon.ico").status_code == 401
+    assert api.get("/v1/jobs", headers=bearer()).status_code == 200
+
+
+def test_a_bad_cookie_counts_as_a_refusal(api: TestClient) -> None:
+    good = bearer()
+    for _ in range(server.REFUSED_SIGN_INS_PER_MINUTE):
+        assert api.get("/v1/jobs", headers={"Cookie": f"{server.COOKIE}={'x' * 43}", **OWN_READ}).status_code == 401
+    assert api.get("/v1/jobs", headers=good).status_code == 429
