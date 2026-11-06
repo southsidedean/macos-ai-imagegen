@@ -21,6 +21,8 @@ from typing import Any, cast
 import pytest
 from selenium import webdriver
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException, WebDriverException
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -115,7 +117,14 @@ class Page:
             raise AssertionError(f"no sign-in form: {state}") from None
         self.type("token", token)
         self.click_submit("sign-in-form")
-        self.wait(lambda: self.shown("main-view"))
+        try:
+            self.wait(lambda: self.shown("main-view"))
+        except TimeoutException:
+            state = self.run(
+                'return [document.getElementById("token").value.length, document.getElementById("sign-in-problem").textContent,'
+                " document.body.innerText.slice(0, 200)]"
+            )
+            raise AssertionError(f"not signed in, with a token of {len(token)} characters: {state}") from None
 
     def click_submit(self, form_id: str) -> None:
         self.driver.execute_script("arguments[0].requestSubmit()", self.find(form_id))
@@ -391,8 +400,10 @@ def test_command_or_control_enter_generates(browser: WebDriver, service: Service
     page.wait(lambda: page.find("model").get_attribute("value"))
     Select(page.find("size")).select_by_value("512x512")
     page.type("prompt", "from the keyboard")
-    # Keys.NULL lets go of Control. Without it, Safari's driver seemed to keep it held, and the next test couldn't type a token.
-    page.find("prompt").send_keys(Keys.CONTROL, Keys.ENTER, Keys.NULL)
+    # Pressed and let go of explicitly, and then reset, as the test after this one couldn't sign in on Safari.
+    page.find("prompt").click()
+    ActionChains(browser).key_down(Keys.CONTROL).send_keys(Keys.ENTER).key_up(Keys.CONTROL).perform()
+    ActionBuilder(browser).clear_actions()
     page.wait(page.thumbnails, seconds=30)
     assert page.find("prompt").get_attribute("value") == "from the keyboard"  # and no new line was added
 
