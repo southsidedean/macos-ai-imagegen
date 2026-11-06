@@ -12,7 +12,7 @@ behind it.
 | 0.2.0 | The engine, FLUX from the catalog, and `mia generate` | Released ([v0.2.0](https://github.com/southsidedean/macos-ai-imagegen/releases/tag/v0.2.0)) |
 | 0.3.0 | The queue, the REST API, and per-device tokens | Released ([v0.3.0](https://github.com/southsidedean/macos-ai-imagegen/releases/tag/v0.3.0)) |
 | 0.4.0 | MCP, the launchd service, and HTTPS on your LAN | Released ([v0.4.0](https://github.com/southsidedean/macos-ai-imagegen/releases/tag/v0.4.0)) |
-| 0.5.0 | The web page | Planned |
+| 0.5.0 | The web page | Next |
 | 0.6.0 | Any Hugging Face model, LoRAs, and diffusers as a second engine | Planned |
 | 0.7.0 | Image to image, inpainting, upscaling, and batches | Planned |
 | 0.8.0 | An installer, signed upgrades, and backup | Planned |
