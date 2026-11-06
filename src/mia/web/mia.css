@@ -158,7 +158,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   .studio[data-view="gallery"] .side > section,
   .studio[data-view="gallery"] .latest { display: none; }
   .gallery-top h2 { display: none; }  /* the switch above already says it */
-  .gallery-top input { max-width: none; }
+  .gallery .gallery-top input { max-width: none; margin-left: 0; }
 }
 
 /* Big enough for a finger: 44 points is what Apple and others ask for. */
@@ -202,6 +202,8 @@ details .pair + .pair { margin-top: 0.75rem; }
   }
   .latest { grid-column: 2; grid-row: 1; }
   .gallery { grid-column: 2; grid-row: 2; }
+  /* With no finished picture, the gallery takes its place too. Otherwise the tall column beside it stretches that empty row. */
+  .latest[hidden] + .gallery { grid-row: 1 / span 2; }
 }
 
 /* The picture that just finished */
@@ -287,6 +289,10 @@ dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.7
 dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.step #detail-close { margin-left: auto; }
+.status { margin-top: 0.75rem; }
+.status:empty { display: none; }
+.status.problem { color: var(--danger); }
 @media (min-width: 48rem) {
   .detail { grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr); }
   .detail img { max-height: calc(100dvh - 1.5rem); height: 100%; }

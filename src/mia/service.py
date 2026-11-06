@@ -257,6 +257,11 @@ def status() -> Status:
     return Status(True, _pid(), port, _running_version(port) if port is not None else None)
 
 
+def running_version(port: int) -> str | None:
+    """What this Mac's server on that port says it is, or None if nothing of ours is answering."""
+    return _running_version(port)
+
+
 def _running_version(port: int) -> str | None:
     # The fixed loopback address over plain HTTP, never a proxy: only this Mac's own server is being asked.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

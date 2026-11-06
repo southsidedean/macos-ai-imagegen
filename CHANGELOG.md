@@ -7,6 +7,9 @@ everything you've made, up to 8 at a time. [The guide](https://github.com/souths
 
 - A finished picture shows large, with **New variation**, which keeps its settings and picks a new seed. On a narrow screen, a switch
   moves between making and browsing. The form has more sizes, and remembers your choices in that browser, but never the prompt.
+- `mia web` opens the page, and makes a token to sign in with the first time. In a picture's view, Previous and Next or the arrow keys
+  move between pictures, and there's Copy prompt and Download. Command-Return generates, and a line under the queue shows the worker and
+  free disk.
 - A browser can sign in with a token and keep a session cookie instead of the token, through `POST /v1/session`. A session lasts up
   to 90 days, and ends with its token. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md#signing-in-from-a-browser) has the details.
 - An image's `links` include `preview` when it has one.

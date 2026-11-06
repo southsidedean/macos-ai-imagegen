@@ -211,6 +211,9 @@ Choices worth recording:
 - Asking with no token or cookie at all no longer counts as a refusal (decided 2026-11-06). It costs no database, and browsers do
   it by themselves: Safari asks for `/favicon.ico` and two `apple-touch-icon` files, and a signed-out page has to ask once, so a few
   reloads could otherwise have locked out an address.
+- `mia web` makes a token called `browser` the first time (decided 2026-11-06), prints it, and copies it to the clipboard. It can't
+  sign in for you: other programs on the Mac can run commands and open pages as well, and a token doesn't go in a URL. Its scope is
+  `admin`, as whoever runs it can already delete these files. A lost one is replaced with `--new`.
 - A background tab keeps polling, because browsers slow it down by themselves, and its title then counts what's finished. Only the
   event stream stops. Only the form's model, size, and count stay in `localStorage`, for that browser's convenience.
 - The number of pictures, up to 8, arrived in 0.5 (decided 2026-11-06), ahead of 0.7's batches, because it needs nothing new from
