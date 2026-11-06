@@ -411,10 +411,9 @@ def test_a_phone_width_doesnt_scroll_sideways(browser: WebDriver, service: Servi
         if width > 500:
             pytest.skip("this browser's window won't go that narrow")
         assert page.run("return document.documentElement.scrollWidth") <= width
-        # Scrolled first, as a person would. Asked to do both, Safari's driver scrolled to a picture partly off the window, and
-        # its click never reached it.
-        browser.execute_script('arguments[0].scrollIntoView({block: "center"})', page.thumbnails()[0])
-        page.thumbnails()[0].click()
+        # From a script, because this test is about layout: once its window has been resized, none of the clicks from Safari's
+        # driver reached the page, not even as a pointerdown. Other tests click for real, before anything resizes the window.
+        browser.execute_script("arguments[0].click()", page.thumbnails()[0])
         page.wait(lambda: page.shown("detail"))
         assert page.run("return document.documentElement.scrollWidth") <= width
         assert page.run('return document.getElementById("detail").getBoundingClientRect().width') <= width
@@ -451,37 +450,3 @@ def test_over_https_the_cookie_is_secure_and_everything_works(browser: WebDriver
         assert browser.get_cookies() == []
     finally:
         running.stop()
-
-
-def test_diag_where_clicks_land(browser: WebDriver, service: Service) -> None:
-    made(service, "short", seed=1)
-    made(service, "a very long prompt " * 40, seed=2)
-    page = page_for(browser, service)
-    page.sign_in(service.token)
-    page.wait(lambda: len(page.thumbnails()) == 2)
-    page.run("""window.seen = []; window.problems = [];
-      for (const kind of ["pointerdown", "click"]) document.addEventListener(kind, (e) => seen.push([kind, Math.round(e.clientX), Math.round(e.clientY), e.target.tagName]), true);
-      window.addEventListener("error", (e) => problems.push(e.message));""")
-    rect = "const r = arguments[0].getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round)"
-    lines = []
-    original = browser.get_window_size()
-    for size, how in (("wide", "driver"), ("narrow", "driver"), ("narrow", "script")):
-        if size == "narrow":
-            browser.set_window_size(390, 844)
-            time.sleep(1)
-        for index, label in ((1, "short"), (0, "long")):
-            thumb = page.thumbnails()[index]
-            browser.execute_script('arguments[0].scrollIntoView({block: "center"})', thumb)
-            time.sleep(0.5)
-            before = browser.execute_script(rect, thumb)
-            page.run("window.seen.length = 0")
-            if how == "driver":
-                thumb.click()
-            else:
-                browser.execute_script("arguments[0].click()", thumb)
-            time.sleep(1)
-            is_open = page.run('return document.getElementById("detail").open')
-            lines.append(f"{size} {how} {label}: open={is_open} shown={page.shown('detail')} thumb={before} events={page.run('return window.seen')} window={page.run('return [innerWidth, innerHeight, scrollY, outerWidth, outerHeight]')} problems={page.run('return window.problems')}")
-            page.run('document.getElementById("detail").close()')
-    browser.set_window_size(original["width"], original["height"])
-    pytest.fail("DIAG\n" + "\n".join(lines))
