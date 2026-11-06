@@ -14,7 +14,7 @@ import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from mia import catalog, history, jobs, paths, server, tokens
+from mia import catalog, db, history, jobs, paths, server, tokens
 from mia.fake_engine import FakeEngine
 from mia.generate import generate
 from mia.engine import MiaError, Request
@@ -68,6 +68,9 @@ def test_health_needs_no_token_and_says_nothing_private(api: TestClient) -> None
         ("GET", "/mcp"),
         ("DELETE", "/v1/images/abc"),
         ("GET", "/v1/models"),
+        ("POST", "/v1/session"),
+        ("GET", "/v1/session"),
+        ("DELETE", "/v1/session"),
     ],
 )
 def test_every_other_route_needs_a_token(api: TestClient, method: str, path: str) -> None:
@@ -586,3 +589,282 @@ def test_the_token_command_can_set_days_and_shows_them(capsys: pytest.CaptureFix
     listed = capsys.readouterr().out.splitlines()
     assert "expires " in listed[0] and "expire" not in listed[1]
     assert main(["token", "create", "--for", "bad", "--days", "0"]) == 1
+
+
+# A browser's session. Python's client keeps cookies the way a browser does, unlike the Sec-Fetch and Origin headers,
+# which each test sets to what real browsers send.
+OWN_READ = {"Sec-Fetch-Site": "same-origin"}
+OWN_WRITE = {"Sec-Fetch-Site": "same-origin", "Origin": BASE}
+
+
+def signed_in(api: TestClient, scope: str = tokens.ADMIN, name: str = "phone") -> str:
+    answer = api.post("/v1/session", headers=bearer(scope, name))
+    assert answer.status_code == 201
+    return api.cookies[server.COOKIE]
+
+
+def test_signing_in_gives_a_cookie_only_the_server_can_read(api: TestClient) -> None:
+    answer = api.post("/v1/session", headers=bearer(tokens.GENERATE, "phone"))
+    assert answer.json() == {"device": "phone", "scope": "generate"}
+    cookie = answer.headers["set-cookie"].lower()
+    assert all(part in cookie for part in ("httponly", "samesite=strict", "path=/", "max-age=7776000"))
+    assert "secure" not in cookie  # Safari drops a Secure cookie on plain HTTP, even on this Mac
+    assert "domain" not in cookie
+
+
+def test_over_https_the_cookie_is_secure_and_held_to_this_host() -> None:
+    names = ["my-mac.local"]
+    with TestClient(server.create_app(names=names), base_url="https://my-mac.local:8766") as client:
+        answer = client.post("/v1/session", headers=bearer())
+        cookie = answer.headers["set-cookie"]
+        assert cookie.startswith("__Host-mia_session=")
+        assert "Secure" in cookie
+        assert "Domain" not in cookie
+        own = {"Sec-Fetch-Site": "same-origin"}
+        assert client.get("/v1/status", headers=own).status_code == 200
+        # The plain name means nothing over HTTPS, where something on plain HTTP could have set it.
+        client.cookies.clear()
+        client.cookies.set(server.COOKIE, cookie.split("=", 1)[1].split(";")[0])
+        assert client.get("/v1/status", headers=own).status_code == 401
+
+
+def test_the_secure_cookie_means_nothing_over_plain_http(api: TestClient) -> None:
+    value = signed_in(api)
+    api.cookies.clear()
+    api.cookies.set(server.SECURE_COOKIE, value)
+    assert api.get("/v1/status", headers=OWN_READ).status_code == 401
+
+
+def test_a_session_works_with_its_tokens_scope(api: TestClient) -> None:
+    signed_in(api, tokens.READ)
+    assert api.get("/v1/session", headers=OWN_READ).json() == {"device": "phone", "scope": "read"}
+    assert api.get("/v1/jobs", headers=OWN_READ).status_code == 200
+    assert api.post("/v1/jobs", json=BODY, headers=OWN_WRITE).status_code == 403
+
+
+def test_a_session_can_submit_a_job_from_its_own_page(api: TestClient) -> None:
+    signed_in(api, tokens.GENERATE)
+    assert api.post("/v1/jobs", json=BODY, headers=OWN_WRITE).status_code == 202
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},  # not a browser mia supports, or not a browser
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},  # another program's page on this Mac: a site ignores ports
+        {"Sec-Fetch-Site": "SAME-ORIGIN"},
+    ],
+)
+def test_a_cookie_cant_read_unless_it_came_from_mias_page(api: TestClient, headers: dict[str, str]) -> None:
+    signed_in(api)
+    assert api.get("/v1/jobs", headers=headers).status_code == 403
+
+
+def test_opening_a_link_can_read_with_a_cookie(api: TestClient) -> None:
+    signed_in(api)
+    assert api.get("/v1/jobs", headers={"Sec-Fetch-Site": "none"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Origin": BASE},  # no Sec-Fetch-Site
+        {"Sec-Fetch-Site": "same-origin"},  # no Origin
+        {"Sec-Fetch-Site": "none", "Origin": BASE},  # typing an address can only read
+        {"Sec-Fetch-Site": "same-site", "Origin": BASE},
+        {"Sec-Fetch-Site": "cross-site", "Origin": BASE},
+        {"Sec-Fetch-Site": "same-origin", "Origin": "http://127.0.0.1:3000"},  # the Guard allows this Origin for a token
+        {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:8765"},
+        {"Sec-Fetch-Site": "same-origin", "Origin": "https://127.0.0.1:8765"},
+    ],
+)
+def test_a_cookie_cant_write_unless_it_came_from_mias_page(api: TestClient, headers: dict[str, str]) -> None:
+    signed_in(api)
+    assert api.post("/v1/jobs", json=BODY, headers=headers).status_code == 403
+    assert api.delete("/v1/images/abc", headers=headers).status_code == 403
+    assert jobs.recent(10) == []
+
+
+def test_the_page_checks_arent_needed_with_a_token(api: TestClient) -> None:
+    assert api.get("/v1/jobs", headers={**bearer(), "Sec-Fetch-Site": "cross-site"}).status_code == 200
+
+
+def test_a_bad_token_doesnt_fall_back_on_a_cookie(api: TestClient) -> None:
+    signed_in(api)
+    wrong = {"Authorization": "Bearer mia_wrong", **OWN_READ}
+    assert api.get("/v1/jobs", headers=wrong).status_code == 401
+
+
+def test_two_session_cookies_are_refused(api: TestClient) -> None:
+    value = signed_in(api)
+    api.cookies.clear()
+    headers = {"Cookie": f"{server.COOKIE}={value}; {server.COOKIE}={value}", **OWN_READ}
+    assert api.get("/v1/jobs", headers=headers).status_code == 401
+
+
+def test_a_session_is_found_among_other_cookies(api: TestClient) -> None:
+    value = signed_in(api)
+    api.cookies.clear()
+    headers = {"Cookie": f"other=1; {server.COOKIE}={value}; another=2", **OWN_READ}
+    assert api.get("/v1/jobs", headers=headers).status_code == 200
+
+
+def test_a_session_cant_make_another(api: TestClient) -> None:
+    # It would otherwise keep itself going for good, past the 90 days, with no token.
+    signed_in(api)
+    assert api.post("/v1/session", headers=OWN_WRITE).status_code == 403
+
+
+def test_a_session_cant_reach_mcp(api: TestClient) -> None:
+    signed_in(api)
+    assert api.post("/mcp", json={}, headers=OWN_WRITE).status_code == 401
+    assert api.get("/mcp", headers=OWN_READ).status_code == 401
+
+
+def test_a_session_is_stored_only_as_a_hash(api: TestClient, tmp_path: Path) -> None:
+    value = signed_in(api)
+    for file in (tmp_path / "mia").glob("history*"):
+        assert value.encode() not in file.read_bytes()
+
+
+def test_signing_out_ends_the_session_and_clears_the_cookie(api: TestClient) -> None:
+    value = signed_in(api)
+    answer = api.delete("/v1/session", headers=OWN_WRITE)
+    assert answer.status_code == 204
+    assert 'mia_session=""' in answer.headers["set-cookie"]
+    assert "max-age=0" in answer.headers["set-cookie"].lower()
+    api.cookies.clear()
+    assert api.get("/v1/jobs", headers={"Cookie": f"{server.COOKIE}={value}", **OWN_READ}).status_code == 401
+    assert tokens.verify_session(value) is None
+
+
+def test_signing_out_needs_the_page_too(api: TestClient) -> None:
+    # Otherwise any site could sign you out.
+    value = signed_in(api)
+    assert api.delete("/v1/session", headers={"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"}).status_code == 403
+    assert tokens.verify_session(value) is not None
+
+
+def test_revoking_a_token_ends_its_sessions(api: TestClient) -> None:
+    value = signed_in(api)
+    tokens.revoke("phone")
+    assert api.get("/v1/jobs", headers=OWN_READ).status_code == 401
+    with db.session() as connection:
+        assert connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+    assert tokens.verify_session(value) is None
+
+
+def test_a_revoked_token_stops_a_session_even_if_its_row_remains() -> None:
+    # In case a session's row outlives its token: the token is what decides.
+    tokens.create("phone")
+    device = tokens.devices()[0]
+    value, _seconds = tokens.start_session(device)
+    with db.session() as connection:
+        connection.execute("UPDATE tokens SET revoked = 'now' WHERE id = ?", (device.id,))
+    assert tokens.verify_session(value) is None
+    assert not tokens.still_active(device.id, value)
+
+
+def test_a_session_stops_after_90_days(monkeypatch: pytest.MonkeyPatch) -> None:
+    tokens.create("phone")
+    value, seconds = tokens.start_session(tokens.devices()[0])
+    assert seconds == pytest.approx(90 * 86400, abs=2)
+    now = time.time()
+    monkeypatch.setattr("mia.tokens.time.time", lambda: now + 89 * 86400)
+    assert tokens.verify_session(value) is not None
+    monkeypatch.setattr("mia.tokens.time.time", lambda: now + 91 * 86400)
+    assert tokens.verify_session(value) is None
+
+
+def test_a_session_cant_outlast_its_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    tokens.create("phone", days=7)
+    device = tokens.devices()[0]
+    value, seconds = tokens.start_session(device)
+    assert seconds == pytest.approx(7 * 86400, abs=2)
+    now = time.time()
+    monkeypatch.setattr("mia.tokens.time.time", lambda: now + 8 * 86400)
+    assert tokens.verify_session(value) is None
+
+
+def test_old_sessions_are_cleared_and_each_token_has_a_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    tokens.create("phone")
+    device = tokens.devices()[0]
+    first, _seconds = tokens.start_session(device)
+    made = [tokens.start_session(device)[0] for _ in range(tokens.MAX_SESSIONS)]
+    assert tokens.verify_session(first) is None  # the oldest went
+    assert all(tokens.verify_session(value) is not None for value in made)
+    now = time.time()
+    monkeypatch.setattr("mia.tokens.time.time", lambda: now + 91 * 86400)
+    tokens.start_session(device)
+    with db.session() as connection:
+        assert connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("value", ["", "x", "a" * 42, "a" * 44, "a" * 42 + "!", "' OR 1=1 --"])
+def test_a_session_of_the_wrong_shape_costs_no_database(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    def no_database(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the database was opened")
+
+    monkeypatch.setattr("mia.tokens.db.session", no_database)
+    assert tokens.verify_session(value) is None
+
+
+def test_refused_cookies_count_as_refusals(api: TestClient) -> None:
+    signed_in(api)
+    for _ in range(server.REFUSED_SIGN_INS_PER_MINUTE):
+        assert api.get("/v1/jobs", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    assert api.get("/v1/jobs", headers=OWN_READ).status_code == 429
+
+
+def test_a_session_counts_against_its_tokens_limit(api: TestClient) -> None:
+    signed_in(api)
+    for _ in range(server.REQUESTS_PER_MINUTE - 1):  # signing in used one
+        assert api.get("/v1/session", headers=OWN_READ).status_code == 200
+    assert api.get("/v1/session", headers=OWN_READ).status_code == 429
+
+
+def test_an_event_stream_stops_when_its_session_ends(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    monkeypatch.setattr(server, "EVENT_TOKEN_CHECK_SECONDS", 0)
+    monkeypatch.setattr(server, "EVENT_POLL_SECONDS", 0.01)
+    value = signed_in(api)
+    job = api.post("/v1/jobs", json=BODY, headers=OWN_WRITE).json()
+    device = tokens.devices()[0]
+
+    async def read() -> list[str]:
+        seen: list[str] = []
+        async for event in server._events(job["id"], device.id, value):
+            seen.append(event)
+            tokens.end_session(value)
+        return seen
+
+    assert len(asyncio.run(asyncio.wait_for(read(), 5))) == 1  # one event, then the check ends it with the job still queued
+
+
+def test_an_image_links_to_a_preview_only_if_it_has_one(api: TestClient) -> None:
+    headers = bearer()
+    api.post("/v1/jobs", json=BODY, headers=headers)
+    run_worker()
+    image = api.get("/v1/images", headers=headers).json()["images"][0]
+    assert image["links"]["preview"] == f"/v1/images/{image['id']}/preview"
+    assert api.get(image["links"]["preview"], headers=headers).status_code == 200
+    paths.preview_file(image["id"]).unlink()
+    assert "preview" not in api.get(f"/v1/images/{image['id']}", headers=headers).json()["links"]
+
+
+def test_the_events_route_gives_the_stream_its_session(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The session's own check is above: this is what makes a real stream use it.
+    given: list[str | None] = []
+
+    async def stream(_job: str, _device: str, session: str | None = None) -> Any:
+        given.append(session)
+        yield ": nothing\n\n"
+
+    monkeypatch.setattr(server, "_events", stream)
+    value = signed_in(api)
+    job = api.post("/v1/jobs", json=BODY, headers=OWN_WRITE).json()
+    assert api.get(job["links"]["events"], headers=OWN_READ).status_code == 200
+    assert given == [value]

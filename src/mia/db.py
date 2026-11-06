@@ -28,6 +28,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE UNIQUE INDEX tokens_active_name ON tokens (name) WHERE revoked IS NULL",
     ),
     ("ALTER TABLE tokens ADD COLUMN expires REAL",),
+    ("CREATE TABLE sessions (digest TEXT PRIMARY KEY, token TEXT NOT NULL, expires REAL NOT NULL)",),
 )
 SCHEMA = len(MIGRATIONS)
 

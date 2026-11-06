@@ -89,6 +89,9 @@ Finished jobs are forgotten after 30 days. Their images stay until you delete th
 | `GET /v1/images/{id}/preview` | read | A JPEG up to 512 pixels on its longest side. An image from before 0.4, or one saved elsewhere with `mia generate --output`, has none, and gets a 404 |
 | `DELETE /v1/images/{id}` | admin | Permanently deletes an image's record, the job that made it, and its file. A file saved elsewhere with `mia generate --output` stays where it is |
 | `GET /v1/models` | read | The models mia knows, and which are downloaded |
+| `POST /v1/session` | read | Signs a browser in with a token, and sets its cookie |
+| `GET /v1/session` | read | The device that's signed in, and its scope |
+| `DELETE /v1/session` | read | Signs a browser out |
 
 `GET /openapi.json` describes all of this in a form tools can read. `/mcp` is for AI assistants: see
 [Connecting an AI assistant](mcp.md).
@@ -114,6 +117,19 @@ token can stop any job. mia is built for one person's or household's devices, no
 each other's work.
 
 Tokens go only in the `Authorization` header, never in a URL, where they would end up in logs and histories.
+
+## Signing in from a browser
+
+A script should use its token on every request. A browser can swap one for a cookie instead, so it doesn't have to keep
+the token, and images and event streams can load without a header. Send `POST /v1/session` with the token in the
+`Authorization` header. The cookie it sets has the token's scope.
+
+A session lasts 90 days, or until its token's end date if that's sooner. `DELETE /v1/session` ends it, and revoking the token
+ends all of its sessions. Each token can have 20 at once, and a new one replaces the oldest.
+
+The cookie only works on `/v1/` routes, and only on requests a browser marks as coming from mia's own page. That means
+`Sec-Fetch-Site: same-origin`, or `none` for reading, and anything that writes also needs an `Origin` matching the address it
+was sent to. Anything else gets a 403. If a request has an `Authorization` header, mia uses that and ignores the cookie.
 
 ## Limits
 
