@@ -54,7 +54,7 @@ direct way to use whichever open model you find on Hugging Face.
 | Sleep | The worker holds a macOS power assertion (as `caffeinate -i` does) only while a job runs, so a remote request isn't cut off by idle sleep and the Mac can still sleep when idle. Waking a sleeping Mac for a request is out of scope. |
 | Service | One launchd user agent for `mia serve`, installed by `mia service install` (changed from two on 2026-11-05). The supervisor already restarts the worker, stops a stuck job, and records why a job failed, none of which launchd can do, and a second agent would have split that between two programs. A user agent means someone must be logged in; the docs say so, and cover automatic login for a Mac used as a server. |
 | Where things live | `~/Library/Application Support/mia/` by default (`MIA_HOME` moves it). The models folder has a setting of its own, so models can live on an external drive. A settings file is for later: for now, settings are environment variables and each command's options. |
-| AI integration | A ladder, as in kia: `mia doctor` with no AI at all, then your own assistant through MCP, then an AI-assisted install prompt at the top of the README, which isn't written yet. mia holds no AI provider keys and makes no calls to an LLM; the assistant you connect does its own prompt writing. |
+| AI integration | A ladder, as in kia: `mia doctor` with no AI at all, then your own assistant through MCP, then an AI-assisted install prompt at the top of the README, which comes with 0.8's installer. mia holds no AI provider keys and makes no calls to an LLM; the assistant you connect does its own prompt writing. |
 | Native app | Not before 1.0. The web page works on a phone and a laptop alike, without a separate app to build, sign, and notarize. |
 | License (decided 2026-11-04) | AGPL-3.0, as in kia, ok3d, and arr-vpn-stack. This covers mia's code. Each model has its own license. |
 
@@ -295,7 +295,7 @@ The same family as kia, ok3d, and avs:
 - `images/social-preview.html` and its rendered `social-preview.png`: 1280 by 640, on the navy
   radial background, in the same layout, with "mi" white and "a" amber, then a tagline and a line of
   explanation. It's uploaded in GitHub's settings by hand.
-- README's top: logo, tagline, badges, then the AI-assisted install prompt and the quick start. The install prompt isn't written yet.
+- README's top: logo, tagline, badges, then the AI-assisted install prompt and the quick start. The install prompt comes with 0.8's installer (decided 2026-11-06), so it can be tried on a clean Mac against the steps it describes.
 - Sample images in the docs are made by mia with an open model, with the prompt and settings
   beside each. Screenshots use a demo gallery, never your real history.
 
