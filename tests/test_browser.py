@@ -411,15 +411,10 @@ def test_a_phone_width_doesnt_scroll_sideways(browser: WebDriver, service: Servi
         if width > 500:
             pytest.skip("this browser's window won't go that narrow")
         assert page.run("return document.documentElement.scrollWidth") <= width
-        thumb = page.thumbnails()[0]
-        rect = "const r = arguments[0].getBoundingClientRect(); return [r.x, r.y, r.width, r.height]"
-        print("DIAG window", page.run("return [innerWidth, innerHeight, scrollY, document.documentElement.scrollHeight]"))
-        print("DIAG thumb before", browser.execute_script(rect, thumb))
-        thumb.click()
-        time.sleep(1)
-        print("DIAG open", page.run('return document.getElementById("detail").open'), "shown", page.shown("detail"), "scrollY", page.run("return scrollY"))
-        print("DIAG dialog", browser.execute_script(rect, page.find("detail")), "thumb after", browser.execute_script(rect, thumb))
-        print("DIAG at thumb", browser.execute_script("const r = arguments[0].getBoundingClientRect(); const e = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return e ? e.outerHTML.slice(0, 80) : null", thumb))
+        # Scrolled first, as a person would. Asked to do both, Safari's driver scrolled to a picture partly off the window, and
+        # its click never reached it.
+        browser.execute_script('arguments[0].scrollIntoView({block: "center"})', page.thumbnails()[0])
+        page.thumbnails()[0].click()
         page.wait(lambda: page.shown("detail"))
         assert page.run("return document.documentElement.scrollWidth") <= width
         assert page.run('return document.getElementById("detail").getBoundingClientRect().width') <= width
