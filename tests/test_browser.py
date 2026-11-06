@@ -704,6 +704,8 @@ def test_a_narrow_window_switches_between_making_and_browsing(browser: WebDriver
         page.click("view-gallery")
         page.wait(page.thumbnails()[0].is_displayed)
         assert not page.shown("generate")
+        left = "return arguments[0].getBoundingClientRect().left"
+        assert browser.execute_script(left, page.find("search")) == browser.execute_script(left, page.thumbnails()[0])
         page.click("view-make")
         page.wait(lambda: page.shown("generate"))
         short = page.run("""return [...document.querySelectorAll("button, select, input, summary")]
