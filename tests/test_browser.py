@@ -20,7 +20,7 @@ from typing import Any, cast
 
 import pytest
 from selenium import webdriver
-from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -108,7 +108,11 @@ class Page:
         self.driver.execute_script("arguments[0].click()", self.find(element_id))
 
     def sign_in(self, token: str) -> None:
-        self.wait(lambda: self.shown("sign-in-view"))
+        try:
+            self.wait(lambda: self.shown("sign-in-view"))
+        except TimeoutException:
+            state = self.run('return [location.href, document.readyState, document.title, document.body.innerText.slice(0, 300)]')
+            raise AssertionError(f"no sign-in form: {state}") from None
         self.type("token", token)
         self.click_submit("sign-in-form")
         self.wait(lambda: self.shown("main-view"))
