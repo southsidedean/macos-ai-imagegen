@@ -576,7 +576,12 @@ def test_progress_is_live_and_a_job_can_be_stopped(browser: WebDriver, service: 
     first = len(browser.find_elements(By.CSS_SELECTOR, ".tile.lit"))
     page.wait(lambda: len(browser.find_elements(By.CSS_SELECTOR, ".tile.lit")) >= first + 2, seconds=3)
     page.wait(lambda: "Step" in page.jobs()[0].text)
-    page.wait(lambda: page.jobs()[0].find_element(By.TAG_NAME, "button").click() is None)
+
+    def press_stop() -> bool:
+        page.jobs()[0].find_element(By.TAG_NAME, "button").click()
+        return True
+
+    page.wait(press_stop)
     assert service.finished(job)["state"] == "cancelled"
     page.wait(lambda: page.shown("queue-empty"), seconds=10)
 
