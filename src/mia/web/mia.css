@@ -78,6 +78,8 @@ input, select, textarea {
   padding: 0.55rem 0.65rem;
 }
 textarea { resize: vertical; display: block; }
+/* Safari draws a plain menu at its own size, whatever this says. In this style, it follows the size and colours above. */
+select { -webkit-appearance: menulist-button; appearance: menulist-button; }
 :focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
 
 button, .button {
