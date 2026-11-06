@@ -353,7 +353,8 @@ def test_next_loads_more_at_the_end_of_the_page(browser: WebDriver, service: Ser
     for number in range(25):
         made(service, f"picture {number}", seed=number, steps=1)
     page = page_for(browser, service)
-    page.sign_in(service.token)
+    # A token of its own: waiting for all those jobs can use up most of a token's 240 requests a minute on a slow machine.
+    page.sign_in(token_for(service, "generate"))
     page.wait(lambda: len(page.thumbnails()) == 24)
     assert page.shown("more")
     browser.execute_script("arguments[0].click()", page.thumbnails()[-1])
@@ -390,7 +391,8 @@ def test_command_or_control_enter_generates(browser: WebDriver, service: Service
     page.wait(lambda: page.find("model").get_attribute("value"))
     Select(page.find("size")).select_by_value("512x512")
     page.type("prompt", "from the keyboard")
-    page.find("prompt").send_keys(Keys.CONTROL, Keys.ENTER)
+    # Keys.NULL lets go of Control. Without it, Safari's driver seemed to keep it held, and the next test couldn't type a token.
+    page.find("prompt").send_keys(Keys.CONTROL, Keys.ENTER, Keys.NULL)
     page.wait(page.thumbnails, seconds=30)
     assert page.find("prompt").get_attribute("value") == "from the keyboard"  # and no new line was added
 
