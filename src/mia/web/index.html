@@ -49,15 +49,28 @@
             <select id="model"></select>
             <p id="license" class="hint"></p>
           </div>
-          <div>
-            <label for="size">Size</label>
-            <select id="size">
-              <option value="1024x1024">Square, 1024 × 1024</option>
-              <option value="832x1216">Portrait, 832 × 1216</option>
-              <option value="1216x832">Landscape, 1216 × 832</option>
-              <option value="512x512">Small, 512 × 512</option>
-              <option value="custom">Custom</option>
-            </select>
+          <div class="size-count">
+            <div>
+              <label for="size">Size</label>
+              <select id="size">
+                <option value="1024x1024">Square, 1024 × 1024</option>
+                <option value="832x1216">Portrait, 832 × 1216</option>
+                <option value="1216x832">Landscape, 1216 × 832</option>
+                <option value="512x512">Small, 512 × 512</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div>
+              <label for="count">Pictures</label>
+              <select id="count">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+              </select>
+            </div>
           </div>
           <details id="advanced">
             <summary>Advanced</summary>

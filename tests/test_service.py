@@ -272,13 +272,14 @@ def test_uninstalling_removes_the_agent_and_leaves_everything_else(launchctl: La
 def test_status_reports_what_launchd_and_the_server_say(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch) -> None:
     assert service.status() == service.Status(False, None, None, None)
     assert launchctl.calls == []  # with nothing installed, there's nothing to ask
-    service.install(8765)
-    monkeypatch.setattr(service, "_running_version", lambda port: "1.2.3" if port == 8765 else None)
+    port = free_port()  # 8765 would fail whenever someone is running mia on this Mac
+    service.install(port)
+    monkeypatch.setattr(service, "_running_version", lambda asked: "1.2.3" if asked == port else None)
     launchctl.answers["print"] = [Launchctl.result(0, "local.mia.serve = {\n\tstate = running\n\tpid = 4242\n\tinherited = {\n}\n")]
-    assert service.status() == service.Status(True, 4242, 8765, "1.2.3")
+    assert service.status() == service.Status(True, 4242, port, "1.2.3")
     launchctl.answers["print"] = [Launchctl.result(113, err="Could not find service")]
     monkeypatch.setattr(service, "_running_version", lambda _port: None)
-    assert service.status() == service.Status(True, None, 8765, None)
+    assert service.status() == service.Status(True, None, port, None)
 
 
 def test_the_commands(launchctl: Launchctl, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

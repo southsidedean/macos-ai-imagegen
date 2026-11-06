@@ -5,6 +5,7 @@
 const PAGE_SIZE = 24;
 const POLL_BUSY = 5000, POLL_IDLE = 30000; // milliseconds. A running job's progress comes from its event stream
 const THUMB_RETRY = 30000, THUMB_RETRIES = 2; // a page of pictures can reach the limit on requests, which lasts a minute
+const SEEDS = 2 ** 32; // seeds run from 0 to one less than this
 const FAILED_SHOWN = 3, FAILED_FOR = 3600000; // a job that failed stays listed for an hour, in case nobody was looking
 
 const $ = (id) => document.getElementById(id);
@@ -160,22 +161,30 @@ async function generate(event) {
   event.preventDefault();
   const [width, height] = chosenSize();
   const body = { prompt: $("prompt").value, model: $("model").value, width, height };
-  if ($("seed").value !== "") body.seed = Number($("seed").value);
   if ($("steps").value !== "") body.steps = Number($("steps").value);
+  const seed = $("seed").value === "" ? null : Number($("seed").value);
+  const count = Number($("count").value);
 
-  const sent = JSON.stringify(body);
+  const sent = JSON.stringify({ ...body, seed, count });
   if (!lastSubmit || lastSubmit.sent !== sent) lastSubmit = { sent, key: crypto.randomUUID() };
   show("generate-problem", "");
   $("generate-button").disabled = true;
+  // One job for each picture, so each waits its turn, can be stopped alone, and keeps a seed that can make it again. With a
+  // seed given, they count up from it, so the same settings make the same set.
+  let added = 0;
   try {
-    await api("POST", "/v1/jobs", { body, headers: { "Idempotency-Key": lastSubmit.key } });
+    for (; added < count; added += 1) {
+      const numbered = seed === null ? body : { ...body, seed: (seed + added) % SEEDS };
+      await api("POST", "/v1/jobs", { body: numbered, headers: { "Idempotency-Key": `${lastSubmit.key}-${added}` } });
+    }
     lastSubmit = null;
-    await poll();
   } catch (problem) {
-    show("generate-problem", problem.message);
+    const start = added ? `${added} of ${count} pictures were added. ` : "";
+    show("generate-problem", start + problem.message);
   } finally {
     $("generate-button").disabled = false;
   }
+  await poll();
 }
 
 function reuse(image) {
@@ -189,6 +198,7 @@ function reuse(image) {
   $("height").value = image.height;
   $("custom-size").hidden = preset;
   $("seed").value = image.seed;
+  $("count").value = "1"; // "use these settings" means make this picture again
   $("steps").value = image.steps;
   $("advanced").open = true;
   $("detail").close();

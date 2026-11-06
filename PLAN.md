@@ -211,6 +211,10 @@ Choices worth recording:
 - Asking with no token or cookie at all no longer counts as a refusal (decided 2026-11-06). It costs no database, and browsers do
   it by themselves: Safari asks for `/favicon.ico` and two `apple-touch-icon` files, and a signed-out page has to ask once, so a few
   reloads could otherwise have locked out an address.
+- The number of pictures, up to 8, arrived in 0.5 (decided 2026-11-06), ahead of 0.7's batches, because it needs nothing new from
+  the API: the page sends one job for each. So each can be stopped alone and keeps its own seed, and the existing limits apply. If
+  the queue fills partway, the page says how many were added. Guidance and negative prompts aren't offered: klein accepts only
+  guidance 1.0, and mflux's klein call takes no negative prompt.
 - Tests run in real browsers (decided 2026-11-06), through Selenium, which is a development dependency only: Chrome and Firefox on
   Linux, and Safari on macOS. Playwright's WebKit isn't Safari, and its browsers are downloads with no hash in the lockfile.
 

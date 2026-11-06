@@ -199,6 +199,68 @@ def test_a_custom_size_and_settings_reach_the_job(browser: WebDriver, service: S
     assert (image["width"], image["height"], image["seed"], image["steps"]) == (640, 384, 99, 3)
 
 
+def seeds_made(service: Service) -> list[int]:
+    _status, data = service.request("GET", "/v1/images")
+    return sorted(image["seed"] for image in json.loads(data)["images"])
+
+
+def test_several_pictures_each_get_their_own_seed(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    page.type("prompt", "a set")
+    Select(page.find("size")).select_by_value("512x512")
+    Select(page.find("count")).select_by_value("3")
+    page.click_submit("generate")
+    page.wait(lambda: len(page.thumbnails()) == 3, seconds=40)
+    assert len(set(seeds_made(service))) == 3
+
+
+def test_several_pictures_count_up_from_a_seed_and_wrap_at_the_end(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    page.type("prompt", "a set")
+    Select(page.find("size")).select_by_value("512x512")
+    Select(page.find("count")).select_by_value("2")
+    page.run('document.getElementById("advanced").open = true')
+    page.type("seed", "4294967295")
+    page.click_submit("generate")
+    page.wait(lambda: len(page.thumbnails()) == 2, seconds=40)
+    assert seeds_made(service) == [0, 4294967295]
+
+
+def test_a_queue_filling_partway_says_how_many_were_added(browser: WebDriver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Slow enough that the running job can't finish and free a place while this runs, on a slow machine.
+    monkeypatch.setattr("test_smoke.STEP_SECONDS", "5")
+    service = Service(tmp_path / "mia")
+    try:
+        long = {"prompt": "waiting", "width": 512, "height": 512, "steps": 50}
+        service.running(service.submit({**long, "seed": 0}))
+        for seed in range(1, 19):  # one running, and 18 of the 20 places taken
+            service.submit({**long, "seed": seed})
+
+        def asked_for() -> int:
+            _status, data = service.request("GET", "/v1/jobs?limit=50")
+            return sum(job["prompt"] == "too many" for job in json.loads(data)["jobs"])
+
+        page = page_for(browser, service)
+        page.sign_in(service.token)
+        page.wait(lambda: page.find("model").get_attribute("value"))
+        page.type("prompt", "too many")
+        Select(page.find("count")).select_by_value("4")
+        page.click_submit("generate")
+        page.wait(lambda: "2 of 4 pictures were added" in page.find("generate-problem").text)
+        assert asked_for() == 2
+        # Sending it again finds the two it already made, so nothing is made twice.
+        page.run('document.getElementById("generate-problem").textContent = ""')
+        page.click_submit("generate")
+        page.wait(lambda: "2 of 4 pictures were added" in page.find("generate-problem").text)
+        assert asked_for() == 2
+    finally:
+        service.stop()
+
+
 def test_a_refused_job_says_why(browser: WebDriver, service: Service) -> None:
     page = page_for(browser, service)
     page.sign_in(service.token)
@@ -265,6 +327,7 @@ def test_an_image_reopens_with_its_settings(browser: WebDriver, service: Service
     page.sign_in(service.token)
     page.wait(page.thumbnails)
     page.wait(lambda: page.find("model").get_attribute("value"))
+    Select(page.find("count")).select_by_value("4")  # reusing a picture makes that one picture
     page.thumbnails()[0].click()
     page.wait(lambda: page.shown("detail"))
     assert page.find("detail-prompt").text == "reopen me"
@@ -278,6 +341,7 @@ def test_an_image_reopens_with_its_settings(browser: WebDriver, service: Service
     assert page.find("seed").get_attribute("value") == "1234"
     assert page.find("steps").get_attribute("value") == "3"
     assert Select(page.find("size")).first_selected_option.get_attribute("value") == "512x512"
+    assert Select(page.find("count")).first_selected_option.get_attribute("value") == "1"
 
 
 def test_search_and_more(browser: WebDriver, service: Service) -> None:
