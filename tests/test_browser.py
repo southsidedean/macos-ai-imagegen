@@ -575,8 +575,8 @@ def test_progress_is_live_and_a_job_can_be_stopped(browser: WebDriver, service: 
     # Faster than the page polls, so this can only be the event stream.
     first = len(browser.find_elements(By.CSS_SELECTOR, ".tile.lit"))
     page.wait(lambda: len(browser.find_elements(By.CSS_SELECTOR, ".tile.lit")) >= first + 2, seconds=3)
-    assert "Step" in page.jobs()[0].text
-    page.jobs()[0].find_element(By.TAG_NAME, "button").click()
+    page.wait(lambda: "Step" in page.jobs()[0].text)
+    page.wait(lambda: page.jobs()[0].find_element(By.TAG_NAME, "button").click() is None)
     assert service.finished(job)["state"] == "cancelled"
     page.wait(lambda: page.shown("queue-empty"), seconds=10)
 
@@ -602,7 +602,8 @@ def test_text_from_a_prompt_stays_text(browser: WebDriver, service: Service) -> 
     page.thumbnails()[0].click()
     page.wait(lambda: page.shown("detail"))
     assert page.find("detail-prompt").text == HOSTILE
-    assert page.jobs()[0].find_element(By.CSS_SELECTOR, ".job-prompt").get_attribute("textContent") == HOSTILE
+    # In a wait, as the event stream replaces a running job's row at every step.
+    page.wait(lambda: page.jobs()[0].find_element(By.CSS_SELECTOR, ".job-prompt").get_attribute("textContent") == HOSTILE)
     assert page.run('return document.querySelectorAll("img[src=x], #queue script, #detail script").length') == 0
     assert page.run("return window.pwned") is None
 
