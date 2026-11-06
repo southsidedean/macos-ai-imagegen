@@ -406,6 +406,81 @@ def test_the_status_line_says_how_things_stand(browser: WebDriver, service: Serv
     assert "problem" in (page.find("status").get_attribute("class") or "")
 
 
+def test_style_ideas_go_in_and_out_of_the_prompt(browser: WebDriver, service: Service) -> None:
+    def chip(name: str) -> WebElement:
+        return next(button for button in browser.find_elements(By.CSS_SELECTOR, "#style-list button") if button.get_attribute("textContent") == name)
+
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.run('document.getElementById("styles").open = true')
+    browser.execute_script("arguments[0].click()", chip("watercolor"))
+    assert page.find("prompt").get_attribute("value") == "watercolor"
+    page.type("prompt", "a fox")
+    assert chip("watercolor").get_attribute("aria-pressed") == "false"
+    browser.execute_script("arguments[0].click()", chip("watercolor"))
+    browser.execute_script("arguments[0].click()", chip("close-up"))
+    assert page.find("prompt").get_attribute("value") == "a fox, watercolor, close-up"
+    assert chip("close-up").get_attribute("aria-pressed") == "true"
+    browser.execute_script("arguments[0].click()", chip("watercolor"))
+    assert page.find("prompt").get_attribute("value") == "a fox, close-up"
+    assert chip("watercolor").get_attribute("aria-pressed") == "false"
+    page.type("prompt", "a whale, film grain")  # typed by hand counts too
+    assert chip("film grain").get_attribute("aria-pressed") == "true"
+
+
+def test_settings_explain_themselves(browser: WebDriver, service: Service) -> None:
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    page.run('document.getElementById("advanced").open = true')
+    assert "same picture" in page.find("advanced").text
+    assert "This model suggests 4" in page.find("steps-hint").text
+
+
+def test_a_pictures_settings_can_be_copied_for_the_api(browser: WebDriver, service: Service) -> None:
+    made(service, "copy my settings", seed=11, steps=3)
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    open_first_picture(page)
+    page.run('window.copied = []; Object.defineProperty(navigator, "clipboard", {configurable: true, value: {writeText: async (text) => { copied.push(text); }}})')
+    page.click("detail-copy-settings")
+    page.wait(lambda: page.find("detail-copy-settings").text == "Copied")
+    settings = json.loads(page.run("return window.copied[0]"))
+    assert settings["prompt"] == "copy my settings" and settings["seed"] == 11 and settings["steps"] == 3
+    assert service.request("POST", "/v1/jobs", settings)[0] == 202  # it really is a job
+
+
+def test_the_sound_is_off_until_chosen_and_is_remembered(browser: WebDriver, service: Service) -> None:
+    def finish_a_picture(seed: int) -> None:
+        before = len(page.thumbnails())
+        service.finished(service.submit({"prompt": "ding", **PIXEL, "seed": seed}))
+        page.run("poll()")
+        page.wait(lambda: len(page.thumbnails()) == before + 1)
+
+    page = page_for(browser, service)
+    page.sign_in(service.token)
+    page.wait(lambda: page.find("model").get_attribute("value"))
+    assert not page.find("sound").is_selected()
+    page.wait(lambda: page.find("status").text)  # the first look at the queue has happened
+    page.run("window.chimes = 0; window.chime = () => { window.chimes += 1; }")
+    finish_a_picture(1)
+    assert page.run("return window.chimes") == 0
+    page.click("sound")
+    finish_a_picture(2)
+    assert page.run("return window.chimes") == 1
+    browser.refresh()
+    page.wait(lambda: page.shown("main-view"))
+    page.wait(lambda: page.find("sound").is_selected())
+
+
+def test_the_real_chime_runs_without_an_error(browser: WebDriver, service: Service) -> None:
+    # Whether it can be heard is for a person to say. This shows the browser accepts it, under the page's policy.
+    page = page_for(browser, service)
+    page.wait(lambda: page.shown("sign-in-view"))
+    page.run("window.made = 0; const Real = AudioContext; window.AudioContext = class extends Real { constructor() { super(); window.made += 1; } };")
+    assert page.run("chime(); return window.made") == 1
+
+
 def seeds_made(service: Service) -> list[int]:
     _status, data = service.request("GET", "/v1/images")
     return sorted(image["seed"] for image in json.loads(data)["images"])
@@ -712,7 +787,7 @@ def test_a_narrow_window_switches_between_making_and_browsing(browser: WebDriver
         assert browser.execute_script(left, page.find("search")) == browser.execute_script(left, page.thumbnails()[0])
         page.click("view-make")
         page.wait(lambda: page.shown("generate"))
-        short = page.run("""return [...document.querySelectorAll("button, select, input, summary")]
+        short = page.run("""return [...document.querySelectorAll("button, select, input:not([type=checkbox]), summary, .option")]
             .filter((e) => e.getClientRects().length && e.getBoundingClientRect().height < 44)
             .map((e) => e.id || e.className || e.tagName)""")
         assert short == []  # big enough for a finger

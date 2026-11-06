@@ -163,7 +163,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 
 /* Big enough for a finger: 44 points is what Apple and others ask for. */
 @media (pointer: coarse), (max-width: 55.99rem) {
-  button, .button, input, select, summary { min-height: 44px; }
+  button, .button, input:not([type="checkbox"]), select, summary, .option { min-height: 44px; }
   .button { display: inline-flex; align-items: center; justify-content: center; }
   summary { line-height: 44px; }  /* as a flex box, it would lose its triangle */
   .job-line button { padding: 0.2rem 0.9rem; }
@@ -290,6 +290,14 @@ dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .step #detail-close { margin-left: auto; }
+.style-group { margin-top: 0.6rem; }
+.style-group h3 { margin: 0 0 0.3rem; font-size: 0.8125rem; font-weight: 500; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.chips button { padding: 0.25rem 0.6rem; font-size: 0.875rem; font-weight: 400; }
+.chips button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.option { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0 0; font-weight: 400; color: var(--muted); }
+.option input { width: auto; }
+.pair .hint { margin-top: 0.25rem; }
 .status { margin-top: 0.75rem; }
 .status:empty { display: none; }
 .status.problem { color: var(--danger); }

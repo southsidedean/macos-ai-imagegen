@@ -917,6 +917,11 @@ def test_the_script_never_builds_html_from_a_string() -> None:
         assert risky not in script, risky
 
 
+def test_the_style_ideas_name_no_artists() -> None:
+    styles = re.search(r"const STYLES = \[(.*?)\n\];", (WEB / "mia.js").read_text(), re.DOTALL)
+    assert styles is not None and '"by ' not in styles[1] and " style of " not in styles[1]
+
+
 def test_the_only_thing_the_page_keeps_is_the_forms_choices() -> None:
     # What's written is what the browser test reads back: never a token or a prompt.
     script = (WEB / "mia.js").read_text()

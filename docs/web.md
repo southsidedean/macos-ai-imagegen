@@ -57,7 +57,7 @@ complains, import the file under **Settings**, **Privacy & Security**, **View Ce
 
 ## Using it
 
-- **New picture.** The prompt is all you need. **Pictures** makes up to 8 at once, each with its own seed, and each waits its
+- **New picture.** The prompt is all you need. **Style ideas** has words to add to it, if you'd like a start. **Pictures** makes up to 8 at once, each with its own seed, and each waits its
   turn in the queue. **Advanced** has the seed and steps, and **Custom** in the size menu lets you choose a width and height, in
   multiples of 16. With a seed and several pictures, the seeds count up from yours, so the same settings make the same set.
 - **The finished picture.** A picture that has just finished shows large, with **New variation**, which makes another with the same
@@ -66,13 +66,15 @@ complains, import the file under **Settings**, **Privacy & Security**, **View Ce
   because it also turns the result into a picture. **Stop** ends a running job at its next step, and **Remove** takes out a
   waiting one. A job that failed stays listed for an hour, with the reason.
 - **Gallery.** Pictures from every device appear here, newest first. Search looks through the prompts.
-- **One picture.** Press a picture to see its settings, with **New variation**, **Copy prompt**, and **Download**. **Use these settings**
+- **One picture.** Press a picture to see its settings, with **New variation**, **Copy prompt**, **Copy settings**, and **Download**. **Copy settings** gives you a job you can send to the [API](api.md). **Use these settings**
   copies them to the form, including the seed, so Generate makes the same picture again. **Previous** and **Next**, or the arrow keys,
   move between pictures.
 - **The keyboard.** In the prompt box, Command-Return or Control-Enter is the same as pressing Generate.
-- **Status.** The line under the queue says whether the worker is running, and how much disk is free.
+- **Status.** The line under the queue says whether the worker is running, and how much disk is free. A switch below it plays a
+  sound when a picture finishes. It's off until you turn it on, and a browser may stay silent until you've pressed something on the page.
 - **Narrow screens.** **Make** and **Gallery** switch between the form and the pictures.
-- **Your choices.** This browser remembers the model, size, and number of pictures you last used, but never the prompt.
+- **Your choices.** This browser remembers the model, size, and number of pictures you last used, and the sound switch, but never
+  the prompt.
 
 ## What your token allows
 
