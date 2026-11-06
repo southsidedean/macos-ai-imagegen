@@ -30,6 +30,10 @@ Working today, and tested:
   `Authorization` header. It's checked before a request's body is read, and a test walks the app's routes to
   prove each needs one. Each device has its own, with its own permissions, stored only as a hash and shown once.
   You can revoke one without touching the others, and give one an end date.
+- A browser swaps its token for a session cookie that scripts on a page can't read, and keeps no token. The session is stored only
+  as a hash, has the token's permissions, lasts at most 90 days, and ends with its token. A cookie is refused unless the
+  browser marks the request as coming from mia's own page, with `Sec-Fetch-Site`, and `Origin` too for anything that writes. So
+  another site can't use it, and neither can another program's page on this Mac. It doesn't work on MCP.
 - Requests and event streams are limited per device. The queue's length and a request's size have limits too, and refused
   requests are limited per address.
 - A connection gets 15 seconds to deliver a whole request, and is closed if an answer sits unread for 30 seconds with the
@@ -54,6 +58,9 @@ Known limits:
   or household's devices.
 - Every process on your Mac shares one address, so one holding 64 connections or sending 30 bad tokens can make
   other programs on the Mac wait. It can't do that to other machines.
+- Browsers send a cookie to every port on a name, so another web server on the same name gets mia's session cookie if your browser
+  visits it. On this Mac, that's another program serving pages on `127.0.0.1` or `localhost`. Over HTTPS, it's another HTTPS
+  server on the name you use for mia. Don't sign in to mia on a name it shares with something you don't trust.
 - A client can hold a connection open by reading answers just fast enough, with or without a token, up to the connection
   caps. Five addresses could fill the 256 connections, which would keep everyone out, including this Mac's own tools, for
   as long as they kept it up.

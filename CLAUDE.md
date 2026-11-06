@@ -93,6 +93,8 @@ uv run mia generate "a red fox"        # MIA_ENGINE=fake needs no model or ML pa
 - Adding or removing a model isn't an MCP tool. That choice stays with a person (`PLAN.md` says why).
 - Tokens are accepted only in the `Authorization` header, stored only as hashes, and shown once. The
   Hugging Face token lives in the Keychain, and nothing returns it.
+- A browser's session cookie is the only other way in. The Guard takes it only on `/v1/`, and only with the `Sec-Fetch-Site`
+  and `Origin` a browser sends from mia's own page. `PLAN.md` says why `SameSite` isn't enough.
 - Prompts are private: keep them out of logs by default.
 - Every fix and feature gets a test. Comments explain why, in plain words.
 

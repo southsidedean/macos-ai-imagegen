@@ -2,6 +2,10 @@
 
 ## 0.5.0 (unreleased)
 
+- A browser can sign in with a token and keep a session cookie instead of the token, through `POST /v1/session`. A session lasts up
+  to 90 days, and ends with its token. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md#signing-in-from-a-browser) has the details.
+- An image's `links` include `preview` when it has one.
+
 ## 0.4.0 (2026-11-05)
 
 AI assistants can now use mia through MCP, and your other devices can reach it over HTTPS on your own network. It can also

@@ -221,7 +221,7 @@ Generated images and prompts are private, and this service will take requests ov
 - Per-device tokens. `mia token create --for laptop --scope generate`. Scopes are `read`,
   `generate`, and `admin`. Only hashes are stored, tokens can be revoked one at a time, and they're
   accepted only in the `Authorization` header, never a URL. The web page signs in with one and keeps
-  a secure session cookie.
+  a session cookie, as [Browser sessions](#browser-sessions) describes.
 - MCP's OAuth flow isn't built into mia. Its rules govern how OAuth tokens are handled, and a
   home server with static per-device tokens doesn't need an identity provider. If it's wanted later,
   it goes in front of mia as a gateway, as with agentgateway in kia.
@@ -489,8 +489,24 @@ These were fixed before anything else in 0.4:
 Still to do:
 
 - Uploads in 0.7 need a higher size limit and more time to arrive, on their routes alone.
-- The web page's cookies in 0.5 need `Sec-Fetch-Site` checks and CSRF protection, because the Guard allows a
-  missing `Origin`, safe today only because tokens are header-only. The Guard's sign-in has to learn about them too.
+
+### Browser sessions
+
+Decided on 2026-11-06, for the web page in 0.5. `<img>` and `EventSource` can't send an `Authorization` header, and a token kept
+in the browser could be read by any script that got onto the page, so a browser swaps its token for a cookie.
+
+- A session is 256 random bits, stored as a hash, with its token's scope. It lasts 90 days, or to the token's end date if that's
+  sooner, and ends when the token does. A token is shown only once, so a phone shouldn't need it often. A session can't make
+  another, or it could keep itself going for good. It's refused on `/mcp`.
+- No separate CSRF token. `SameSite=Strict` isn't enough, because a site ignores ports: another program's page on `localhost:3000`
+  counts as the same site as mia. So a cookie also needs `Sec-Fetch-Site: same-origin`, or `none` to read, and anything that writes
+  needs an `Origin` exactly matching its scheme and `Host`. A page can't set either header, so a token in the page would add nothing.
+  A request with neither header is refused, because every browser mia supports sends them. The Guard's looser `Origin` check still applies to tokens.
+- Two cookie names: `__Host-mia_session` over HTTPS and `mia_session` on plain HTTP, each read only on its own scheme. Safari drops
+  a `Secure` cookie on `http://127.0.0.1`, and Chrome and Firefox keep it, so one name that's always `Secure` would have failed
+  in Safari alone. Tested on 2026-11-06 with Chrome 156, Firefox 159, and Safari on a test Mac, over `127.0.0.1` and `localhost`:
+  each sent `Sec-Fetch-Site` and `Origin` as above on `fetch`, images, and `EventSource`.
+- Sign-in stays a token pasted into the page (decided 2026-11-06). A QR code can follow if a real phone shows it's needed.
 
 ## Risks
 

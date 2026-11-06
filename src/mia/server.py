@@ -1,7 +1,7 @@
 """The REST API. It never imports an ML package: it reads and writes the database, and the worker does the rest.
 
-Everything but PUBLIC needs a token, and the Guard checks it before anything else runs, so a route added later
-can't be left open by accident. /mcp sits behind it too. It listens only on this Mac, unless mia remote on has added
+Everything but PUBLIC needs a token or a browser's session, and the Guard checks it before anything else runs, so a
+route added later can't be left open by accident. /mcp sits behind it too. It listens only on this Mac, unless mia remote on has added
 HTTPS for your own network. Plain HTTP stays on this Mac alone.
 """
 
@@ -71,7 +71,11 @@ TLS_CLOSE_SECONDS = 5.0  # asyncio waits 30 by default for the other side to agr
 RENEW_CHECK_SECONDS = 6 * 3600  # a Mac used as a server can run for longer than its certificate lasts
 PUBLIC = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json")}
 DEVICE = "mia.device"  # where the Guard leaves the device it signed in, in the request's scope
+SESSION = "mia.session"  # where the Guard leaves the browser session it signed in with, if it did
 WITHIN = "mia.within"  # the address of an MCP tool's calls to this API, which no real connection can have
+# __Host- makes a browser refuse the cookie unless it's Secure, from this exact host. Safari drops Secure cookies on plain
+# HTTP, even on this Mac, so loopback needs a name of its own. Each is read only on its own scheme.
+COOKIE, SECURE_COOKIE = "mia_session", "__Host-mia_session"
 EVENT_POLL_SECONDS = 0.5
 EVENT_KEEPALIVE_SECONDS = 15.0
 EVENT_MAX_SECONDS = 3600.0
@@ -140,6 +144,40 @@ class Connection(H11Protocol):
             self._deadline = None
 
 
+def _cookie_name(scope: Scope) -> str:
+    return SECURE_COOKIE if scope.get("scheme") == "https" else COOKIE
+
+
+def _session_cookie(scope: Scope, pairs: list[tuple[str, str]]) -> str | None:
+    """Only the API's own routes take a cookie. MCP clients aren't browsers, and a cookie has no business there."""
+    if not scope["path"].startswith("/v1/"):
+        return None
+    name = _cookie_name(scope)
+    found = [
+        value
+        for key, header in pairs
+        if key == "cookie"
+        for part in header.split(";")
+        for cookie, _, value in [part.strip().partition("=")]
+        if cookie == name
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _from_own_page(scope: Scope, pairs: list[tuple[str, str]]) -> bool:
+    """A browser adds a cookie by itself, so a cookie alone doesn't show that mia's page asked: another site, or another
+    program's page on this Mac, could. SameSite doesn't stop the second, because a site ignores ports. Pages can't set these
+    two headers, and every browser mia supports sends them. "none" is someone opening a link or typing an address, which
+    can only read. Nothing that writes may need it."""
+    sites = [value for key, value in pairs if key == "sec-fetch-site"]
+    site = sites[0] if len(sites) == 1 else ""
+    if scope["method"] in ("GET", "HEAD"):
+        return site in ("same-origin", "none")
+    origin = next((value for key, value in pairs if key == "origin"), "")
+    host = next((value for key, value in pairs if key == "host"), "")
+    return site == "same-origin" and origin.lower() == f"{scope.get('scheme')}://{host}".lower()
+
+
 class Guard:
     """Runs before everything else. Host and Origin checks are what stop DNS rebinding: a web page that points
     its own name at this Mac still can't get in, and MCP's spec requires the same check. The token check is here
@@ -184,8 +222,17 @@ class Guard:
         if counted and self.limiter.full(address, "refused", REFUSED_SIGN_INS_PER_MINUTE):
             return JSONResponse({"detail": "too many refused requests"}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
         given = [value for key, value in pairs if key == "authorization"]
-        scheme, _, presented = (given[0] if len(given) == 1 else "").partition(" ")
-        found = await asyncio.to_thread(tokens.verify, presented.strip()) if scheme.lower() == "bearer" else None
+        # A token that's sent decides it, right or wrong: a bad one mustn't fall back on a cookie sent along with it.
+        session = None if given else _session_cookie(scope, pairs)
+        if session is not None:
+            if not _from_own_page(scope, pairs):
+                if counted:
+                    self.limiter.allow(address, "refused", REFUSED_SIGN_INS_PER_MINUTE)
+                return JSONResponse({"detail": "a session only works from mia's own page"}, status.HTTP_403_FORBIDDEN)
+            found = await asyncio.to_thread(tokens.verify_session, session)
+        else:
+            scheme, _, presented = (given[0] if len(given) == 1 else "").partition(" ")
+            found = await asyncio.to_thread(tokens.verify, presented.strip()) if scheme.lower() == "bearer" else None
         if found is None:
             if counted:
                 self.limiter.allow(address, "refused", REFUSED_SIGN_INS_PER_MINUTE)
@@ -193,6 +240,8 @@ class Guard:
         if not self.limiter.allow(found.id, "all", REQUESTS_PER_MINUTE):
             return JSONResponse({"detail": "too many requests"}, status.HTTP_429_TOO_MANY_REQUESTS, {"Retry-After": "60"})
         scope[DEVICE] = found
+        if session is not None:
+            scope[SESSION] = session
         return None
 
     @staticmethod
@@ -275,6 +324,8 @@ def _image_view(record: history.Record) -> dict[str, Any]:
     view = asdict(record)
     del view["file"]  # a path on this Mac: clients use the link
     view["links"] = {"self": f"/v1/images/{record.id}", "file": f"/v1/images/{record.id}/file"}
+    if paths.preview_file(record.id).is_file():  # images from before 0.4, and those saved elsewhere, have none
+        view["links"]["preview"] = f"/v1/images/{record.id}/preview"
     return view
 
 
@@ -325,7 +376,7 @@ class _Stream(StreamingResponse):
             self._release()
 
 
-async def _events(job_id: str, device_id: str) -> AsyncIterator[str]:
+async def _events(job_id: str, device_id: str, session: str | None = None) -> AsyncIterator[str]:
     """Server-sent events: one when anything about the job changes, and the last when it's finished.
 
     Async, so a waiting stream doesn't hold one of the threads every other route needs. The database work goes to
@@ -336,7 +387,7 @@ async def _events(job_id: str, device_id: str) -> AsyncIterator[str]:
     while time.monotonic() - began < EVENT_MAX_SECONDS:
         if time.monotonic() - checked > EVENT_TOKEN_CHECK_SECONDS:
             checked = time.monotonic()
-            if not await asyncio.to_thread(tokens.still_active, device_id):
+            if not await asyncio.to_thread(tokens.still_active, device_id, session):
                 return
         job = await asyncio.to_thread(jobs.get, job_id)
         if job is None:
@@ -435,6 +486,40 @@ def create_app(run_worker: bool = False, names: Iterable[str] = ()) -> FastAPI:
             "disk_free_bytes": free,
         }
 
+    @app.post("/v1/session", status_code=status.HTTP_201_CREATED)
+    def sign_in(request: HttpRequest, response: Response, found: Reader) -> dict[str, str]:
+        """Swaps a token for a cookie, so a browser needn't keep the token, and images and event streams can be signed in."""
+        if SESSION in request.scope:  # or a session could keep itself going for good, without the token
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "signing in needs a token")
+        issued, seconds = tokens.start_session(found)
+        response.set_cookie(
+            _cookie_name(request.scope),
+            issued,
+            max_age=seconds,
+            path="/",
+            secure=request.scope.get("scheme") == "https",
+            httponly=True,
+            samesite="strict",
+        )
+        return {"device": found.name, "scope": found.scope}
+
+    @app.get("/v1/session")
+    def whoami(found: Reader) -> dict[str, str]:
+        return {"device": found.name, "scope": found.scope}
+
+    @app.delete("/v1/session", status_code=status.HTTP_204_NO_CONTENT)
+    def sign_out(request: HttpRequest, response: Response, _device: Reader) -> None:
+        session = request.scope.get(SESSION)
+        if session is not None:
+            tokens.end_session(session)
+            response.delete_cookie(
+                _cookie_name(request.scope),
+                path="/",
+                secure=request.scope.get("scheme") == "https",
+                httponly=True,
+                samesite="strict",
+            )
+
     @app.post("/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
     def submit(
         body: JobIn,
@@ -477,12 +562,12 @@ def create_app(run_worker: bool = False, names: Iterable[str] = ()) -> FastAPI:
         return _job_view(_found(jobs.get(job_id), "job"))
 
     @app.get("/v1/jobs/{job_id}/events")
-    def job_events(job_id: str, found: Reader) -> _Stream:
+    def job_events(job_id: str, request: HttpRequest, found: Reader) -> _Stream:
         _found(jobs.get(job_id), "job")
         if not streams.take(found.id):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many open event streams", {"Retry-After": "60"})
         return _Stream(
-            _events(job_id, found.id),
+            _events(job_id, found.id, request.scope.get(SESSION)),
             lambda: streams.give_back(found.id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store"},
