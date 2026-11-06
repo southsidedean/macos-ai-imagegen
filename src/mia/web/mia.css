@@ -78,8 +78,18 @@ input, select, textarea {
   padding: 0.55rem 0.65rem;
 }
 textarea { resize: vertical; display: block; }
-/* Safari draws a plain menu at its own size, whatever this says. In this style, it follows the size and colours above. */
-select { -webkit-appearance: menulist-button; appearance: menulist-button; }
+/* Safari draws a native menu at its own size, whatever this says, so the page draws its own box and arrow. The picker that
+   opens is still the system's. The arrow is two gradients, as the page's policy allows no image but its own files. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 1.75rem;
+  text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: right 0.93rem center, right 0.6rem center;
+  background-size: 0.35rem 0.35rem;
+  background-repeat: no-repeat;
+}
 :focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
 
 button, .button {
