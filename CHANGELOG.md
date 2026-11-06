@@ -3,7 +3,7 @@
 ## 0.5.0 (unreleased)
 
 mia has a web page. Open it on the Mac, or from your phone once HTTPS is on, to make pictures, watch the queue, and browse
-everything you've made. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/web.md) has the steps.
+everything you've made, up to 8 at a time. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/web.md) has the steps.
 
 - A browser can sign in with a token and keep a session cookie instead of the token, through `POST /v1/session`. A session lasts up
   to 90 days, and ends with its token. [The guide](https://github.com/southsidedean/macos-ai-imagegen/blob/main/docs/api.md#signing-in-from-a-browser) has the details.

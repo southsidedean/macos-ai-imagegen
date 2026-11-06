@@ -48,8 +48,9 @@ complains, import the file under **Settings**, **Privacy & Security**, **View Ce
 
 ## Using it
 
-- **New picture.** The prompt is all you need. **Advanced** has the seed and steps, and **Custom** in the size menu lets you
-  choose a width and height, in multiples of 16.
+- **New picture.** The prompt is all you need. **Pictures** makes up to 8 at once, each with its own seed, and each waits its
+  turn in the queue. **Advanced** has the seed and steps, and **Custom** in the size menu lets you choose a width and height, in
+  multiples of 16. With a seed and several pictures, the seeds count up from yours, so the same settings make the same set.
 - **Queue.** One job runs at a time, and the rest wait. Each lit tile is a step that has started. The last step takes longest,
   because it also turns the result into a picture. **Stop** ends a running job at its next step, and **Remove** takes out a
   waiting one. A job that failed stays listed for an hour, with the reason.
