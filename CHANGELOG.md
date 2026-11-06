@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
 ## 0.4.0 (2026-11-05)
 
 AI assistants can now use mia through MCP, and your other devices can reach it over HTTPS on your own network. It can also
