@@ -202,6 +202,18 @@ A prompt box, model picker, size, and Generate, with advanced settings folded aw
 queue with live progress, and a gallery where any image can be reopened with its settings. It's plain
 HTML, CSS, and JavaScript, with no build step, and uses only the public API. It works on a phone.
 
+Choices worth recording:
+
+- One event stream at a time, for the running job, and polling for the rest of the queue. mia speaks HTTP/1.1, and a browser
+  allows about six connections to a host, so a stream per job could stop the page loading anything else.
+- A gallery page is 24 pictures, loaded as they scroll into view. Previews stay `no-store`, so they count against the limit of 240
+  requests a minute every time, and a picture refused by that limit tries again 30 seconds later.
+- Asking with no token or cookie at all no longer counts as a refusal (decided 2026-11-06). It costs no database, and browsers do
+  it by themselves: Safari asks for `/favicon.ico` and two `apple-touch-icon` files, and a signed-out page has to ask once, so a few
+  reloads could otherwise have locked out an address.
+- Tests run in real browsers (decided 2026-11-06), through Selenium, which is a development dependency only: Chrome and Firefox on
+  Linux, and Safari on macOS. Playwright's WebKit isn't Safari, and its browsers are downloads with no hash in the lockfile.
+
 ## Security
 
 Generated images and prompts are private, and this service will take requests over a network.

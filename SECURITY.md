@@ -26,10 +26,12 @@ Working today, and tested:
 - mia's folder and history file are readable only by you.
 - The API listens only on this Mac unless you turn on remote access, and refuses a request whose `Host` or `Origin` names
   anywhere else, which stops a web page from reaching it through DNS rebinding.
-- Everything but a bare health check and the API's public description needs a token, and only in the
-  `Authorization` header. It's checked before a request's body is read, and a test walks the app's routes to
+- The web page's files hold nothing of yours, and everything else but a bare health check and the API's public description
+  needs a token, and only in the `Authorization` header. It's checked before a request's body is read, and a test walks the app's routes to
   prove each needs one. Each device has its own, with its own permissions, stored only as a hash and shown once.
   You can revoke one without touching the others, and give one an end date.
+- The web page runs under a strict content security policy: only its own files, and nothing inline. It adds prompts only as text,
+  so a prompt can't run as code, and a test checks both. It keeps no token.
 - A browser swaps its token for a session cookie that scripts on a page can't read, and keeps no token. The session is stored only
   as a hash, has the token's permissions, lasts at most 90 days, and ends with its token. A cookie is refused unless the
   browser marks the request as coming from mia's own page, with `Sec-Fetch-Site`, and `Origin` too for anything that writes. So

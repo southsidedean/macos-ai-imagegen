@@ -69,7 +69,21 @@ HANDSHAKE_SECONDS = 5.0
 MAX_HANDSHAKES, MAX_HANDSHAKES_PER_ADDRESS = 64, 16
 TLS_CLOSE_SECONDS = 5.0  # asyncio waits 30 by default for the other side to agree to close
 RENEW_CHECK_SECONDS = 6 * 3600  # a Mac used as a server can run for longer than its certificate lasts
-PUBLIC = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json")}
+WEB = Path(__file__).parent / "web"
+# An exact list, so nothing else in the folder or beyond it can be asked for. These files hold no one's data: the page asks
+# for that once it's signed in, which is why they need no token.
+PAGE = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/mia.css": ("mia.css", "text/css; charset=utf-8"),
+    "/mia.js": ("mia.js", "text/javascript; charset=utf-8"),
+    "/logo.svg": ("logo.svg", "image/svg+xml"),
+    "/logo-dark.svg": ("logo-dark.svg", "image/svg+xml"),
+}
+PAGE_POLICY = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+    "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+PUBLIC = {("GET", "/v1/health"), ("GET", "/openapi.json"), ("HEAD", "/openapi.json"), *(("GET", path) for path in PAGE)}
 DEVICE = "mia.device"  # where the Guard leaves the device it signed in, in the request's scope
 SESSION = "mia.session"  # where the Guard leaves the browser session it signed in with, if it did
 WITHIN = "mia.within"  # the address of an MCP tool's calls to this API, which no real connection can have
@@ -234,7 +248,9 @@ class Guard:
             scheme, _, presented = (given[0] if len(given) == 1 else "").partition(" ")
             found = await asyncio.to_thread(tokens.verify, presented.strip()) if scheme.lower() == "bearer" else None
         if found is None:
-            if counted:
+            # Sending nothing costs no database, and browsers do it by themselves: Safari asks for three icons on its own, and
+            # a signed-out page has to ask once. Counting those would lock out someone who reloaded a few times.
+            if counted and (given or session is not None):
                 self.limiter.allow(address, "refused", REFUSED_SIGN_INS_PER_MINUTE)
             return JSONResponse({"detail": "a valid token is needed"}, status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"})
         if not self.limiter.allow(found.id, "all", REQUESTS_PER_MINUTE):
@@ -635,6 +651,16 @@ def create_app(run_worker: bool = False, names: Iterable[str] = ()) -> FastAPI:
                 for model in catalog.MODELS
             ],
         }
+
+    def page_file(name: str, kind: str) -> Callable[[], FileResponse]:
+        def answer() -> FileResponse:
+            headers = {"Cache-Control": "no-cache", "Content-Security-Policy": PAGE_POLICY, "Referrer-Policy": "same-origin"}
+            return FileResponse(WEB / name, media_type=kind, headers=headers)
+
+        return answer
+
+    for path, (name, kind) in PAGE.items():
+        app.add_api_route(path, page_file(name, kind), methods=["GET"], include_in_schema=False)
 
     # MCP's optional stream for messages from the server, which this server never sends. Left to the SDK, it stays open
     # with no limit, and outlasts its token. The spec lets a server answer 405, and clients carry on without it.

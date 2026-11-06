@@ -40,6 +40,9 @@ dev = [
     "pip-audit==2.10.1",
     # FastAPI's test client needs it.
     "httpx2==2.16.0",
+    # Drives real browsers for tests/test_browser.py. Cookies and Sec-Fetch headers differ between them, and a test browser
+    # such as Playwright's isn't the Safari on an iPhone.
+    "selenium==4.52.0",
 ]
 
 [tool.uv]
@@ -51,6 +54,9 @@ version = { attr = "mia.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mia = ["web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

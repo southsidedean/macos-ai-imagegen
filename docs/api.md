@@ -1,6 +1,6 @@
 # The REST API
 
-Scripts and other programs on your Mac can ask mia for images through its API. It listens only on this
+Scripts and other programs on your Mac can ask mia for images through its API, which is also what [the web page](web.md) uses. It listens only on this
 Mac until you turn on [HTTPS for your other devices](remote.md).
 
 ## Start here
@@ -136,7 +136,7 @@ was sent to. Anything else gets a 403. If a request has an `Authorization` heade
 | Limit | Value | What you get |
 |---|---|---|
 | Requests per device, per minute | 240 | 429, with `Retry-After` |
-| Refused requests from one address, per minute | 30 | 429, with `Retry-After`, even with a good token, until the minute has passed |
+| Refused requests from one address, per minute, counting those with a wrong token or cookie | 30 | 429, with `Retry-After`, even with a good token, until the minute has passed |
 | Jobs submitted per device, per minute | 30 | 429, with `Retry-After` |
 | Jobs waiting in the queue | 20 | 429, with `Retry-After` |
 | Open event streams | 8 per device, 32 in all | 429, with `Retry-After` |
@@ -147,8 +147,8 @@ was sent to. Anything else gets a 403. If a request has an `Authorization` heade
 | Free disk needed to accept a job | 2 GB | 507 |
 
 A model that isn't downloaded yet gets a 409, with the command that downloads it. A request that can't be
-understood gets a 422 saying which field and why, without repeating your prompt. Anything but `GET /v1/health` and
-`GET` or `HEAD /openapi.json` gets a 401 without a token, even a path that doesn't exist.
+understood gets a 422 saying which field and why, without repeating your prompt. Anything but `GET /v1/health`,
+`GET` or `HEAD /openapi.json`, and the web page's own files gets a 401 without a token, even a path that doesn't exist.
 
 A job has no limit on how long it takes, as long as it keeps moving. If its `step` doesn't change for 30 minutes,
 mia restarts the worker and marks the job failed, and the next job runs. Time the Mac spends asleep doesn't count.

@@ -21,7 +21,7 @@ formats, or depend on it.
 
 This is the design from `PLAN.md`; these parts arrive release by release.
 
-- `mia serve` runs the REST API (`server.py`), the MCP server, and later the web page. It never imports an
+- `mia serve` runs the REST API (`server.py`), the MCP server, and the web page (`web/`, a fixed list of files in `server.PAGE`). It never imports an
   ML package, and a test checks that. `supervisor.py` is a thread in it that starts the worker, restarts it,
   and records what a dead one left behind.
 - MCP tools (`mcp_server.py`) only call the REST API: within the process at `/mcp`, with the assistant's token, and
@@ -35,6 +35,8 @@ This is the design from `PLAN.md`; these parts arrive release by release.
 - They share one SQLite database (`db.py`, migrations only ever added to the end), with images as files beside
   it, under `MIA_HOME` (by default `~/Library/Application Support/mia/`). Anything a worker knows is there, so
   it can be killed at any moment. `gpu.py` is a flock that lets only one process hold a model.
+- The page uses only the public API, and text from it only ever goes in as text. Cookies and `Sec-Fetch` headers differ between browsers,
+  so `tests/test_browser.py` runs it in real ones, when `MIA_BROWSERS` names them. Change the page, and run it.
 - `tests/test_smoke.py` runs the real server and worker as processes. The Guard in `server.py` checks the token for
   everything but `PUBLIC`, before a body is read, and `tests/test_server.py` walks the app's routes to prove each
   also asks for one. `tests/test_connections.py` tests the connection limits over real sockets.
@@ -63,6 +65,7 @@ uv sync --locked --extra dev --extra engine  # set up from the lockfile; engine 
 git config core.hooksPath .githooks    # once: the git hooks
 scripts/check.sh                       # everything CI runs; the pre-push hook runs it too
 uv run pytest -k name                  # tests by name
+MIA_BROWSERS=chrome,firefox uv run pytest tests/test_browser.py  # the page, in real browsers; safari works too
 scripts/real-engine.sh                 # real generation, by hand, on Apple Silicon only
 uv run mia doctor                      # is this machine ready? changes nothing
 uv run mia models pull                 # download the default model

@@ -27,7 +27,8 @@ file is the one your Mac made, by comparing this fingerprint with the one the Ma
 openssl x509 -in mia-authority.pem -noout -fingerprint -sha256
 ```
 
-Then ask mia for its health, and for its status, which needs the token:
+To use mia from a phone's browser, follow [the web page guide](web.md#on-your-phone) instead. For a script or a laptop, ask
+mia for its health, and for its status, which needs the token:
 
 ```sh
 curl --cacert mia-authority.pem https://my-mac.local:8766/v1/health
@@ -109,8 +110,8 @@ it on again.
 - **Your own network only.** mia drops connections from anything but this Mac and the private address ranges, so a port
   forwarded on your router normally wouldn't get through. That also rules out a VPN like Tailscale for now, which uses other
   addresses. It does mean any private network the Mac joins, so turn this off if you take the Mac somewhere you don't trust.
-- **What strangers on your network can see.** Without a token they can read `/v1/health`, which gives mia's version, and
-  `/openapi.json`, which lists its routes.
+- **What strangers on your network can see.** Without a token they can read `/v1/health`, which gives mia's version,
+  `/openapi.json`, which lists its routes, and the web page's own files, which hold nothing of yours.
 - **IPv4 only,** for now. mia doesn't listen on IPv6, so a device on a network with nothing but IPv6 can't reach it.
 
 ## Under the hood
