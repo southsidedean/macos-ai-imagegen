@@ -36,7 +36,12 @@
     <p class="hint">To make one, run this on the Mac: <code>uv run mia token create --for my-phone</code></p>
   </main>
 
-  <main id="main-view" class="studio" hidden>
+  <main id="main-view" class="studio" data-view="make" hidden>
+    <nav class="views" aria-label="Sections of the page">
+      <button id="view-make" type="button" aria-pressed="true">Make</button>
+      <button id="view-gallery" type="button" aria-pressed="false">Gallery</button>
+    </nav>
+
     <div class="side">
       <section id="compose" aria-labelledby="compose-title">
         <h2 id="compose-title">New picture</h2>
@@ -53,10 +58,14 @@
             <div>
               <label for="size">Size</label>
               <select id="size">
-                <option value="1024x1024">Square, 1024 × 1024</option>
-                <option value="832x1216">Portrait, 832 × 1216</option>
-                <option value="1216x832">Landscape, 1216 × 832</option>
-                <option value="512x512">Small, 512 × 512</option>
+                <option value="1024x1024">1:1, 1024 × 1024</option>
+                <option value="832x1216">2:3, 832 × 1216</option>
+                <option value="1216x832">3:2, 1216 × 832</option>
+                <option value="864x1152">3:4, 864 × 1152</option>
+                <option value="1152x864">4:3, 1152 × 864</option>
+                <option value="768x1344">9:16, 768 × 1344</option>
+                <option value="1344x768">16:9, 1344 × 768</option>
+                <option value="512x512">1:1 small, 512 × 512</option>
                 <option value="custom">Custom</option>
               </select>
             </div>
@@ -107,6 +116,21 @@
       </section>
     </div>
 
+    <section id="latest" class="latest" aria-labelledby="latest-title" aria-live="polite" hidden>
+      <button id="latest-open" type="button" class="latest-picture" aria-label="Show this picture's settings">
+        <img id="latest-image" alt="">
+      </button>
+      <div class="latest-text">
+        <h2 id="latest-title">Done</h2>
+        <p id="latest-prompt" class="latest-prompt"></p>
+        <p id="latest-problem" class="problem" role="alert" hidden></p>
+        <div class="actions">
+          <button id="latest-variation" type="button" class="primary">New variation</button>
+          <button id="latest-dismiss" type="button" class="quiet">Dismiss</button>
+        </div>
+      </div>
+    </section>
+
     <section class="gallery" aria-labelledby="gallery-title">
       <div class="gallery-top">
         <h2 id="gallery-title">Gallery</h2>
@@ -126,7 +150,8 @@
         <dl id="detail-settings"></dl>
         <p id="detail-problem" class="problem" role="alert" hidden></p>
         <div class="actions">
-          <button id="detail-reuse" type="button" class="primary">Use these settings</button>
+          <button id="detail-variation" type="button" class="primary">New variation</button>
+          <button id="detail-reuse" type="button" class="quiet">Use these settings</button>
           <a id="detail-file" class="button quiet" target="_blank" rel="noopener">Open full size</a>
           <button id="detail-delete" type="button" class="quiet danger">Delete</button>
           <button id="detail-close" type="button" class="quiet">Close</button>
